@@ -37,18 +37,22 @@
               <el-icon><Monitor /></el-icon>
               <span>儀表板</span>
             </el-menu-item>
-            <el-sub-menu index="tools">
+            <el-sub-menu index="tool">
               <template #title>
-                <el-icon><Tools /></el-icon>
+                <el-icon><Key /></el-icon>
                 <span>金鑰管理模組</span>
               </template>
               <el-menu-item index="tool1">金鑰清單</el-menu-item>
-              <el-menu-item index="tool2">金鑰詳細資訊</el-menu-item>
-              <el-menu-item index="tool3">金鑰輪替管理</el-menu-item>
+              <el-menu-item index="tool3">金鑰資訊圖表</el-menu-item>
+              <el-menu-item index="tool4">金鑰輪替及更換</el-menu-item>
             </el-sub-menu>
+            <el-menu-item index="account">
+              <el-icon><User /></el-icon>
+              <span>帳號管理</span>
+            </el-menu-item>
             <el-menu-item index="settings">
               <el-icon><Setting /></el-icon>
-              <span>設定</span>
+              <span>通知與提醒</span>
             </el-menu-item>
           </el-menu>
         </el-aside>
@@ -62,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Monitor, Tools, Setting, House } from '@element-plus/icons-vue'
+import { ArrowDown, Monitor, Tools, Setting, House, MostlyCloudy, User, Key} from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'   // 引入 Pinia store
 
@@ -77,7 +81,9 @@ const activeMenu = computed(() => {
   const path = route.path
   if (path === '/') return 'home'
   if (path === '/dashboard') return 'dashboard'
+  if (path === '/cloud') return 'cloud'
   if (path.startsWith('/tools/')) return path.substring(7)
+  if (path === '/account') return 'account'
   if (path === '/settings') return 'settings'
   return ''
 })
@@ -91,7 +97,7 @@ const activeMenu = computed(() => {
     router.push('/login')
   }*/
 
-// ✅ 登出事件
+// 登出事件
 const handleLogout = async () => {
   try {
     await auth.logout() // 呼叫 Pinia 中的 logout()
@@ -108,14 +114,17 @@ const handleMenuSelect = (index: string) => {
     case 'dashboard':
       router.push('/dashboard')
       break
+    case 'account':
+      router.push('/account')
+      break
     case 'tool1':
       router.push('/tools/tool1')
       break
-    case 'tool2':
-      router.push('/tools/tool2')
-      break
     case 'tool3':
       router.push('/tools/tool3')
+      break
+    case 'tool4':
+      router.push('/tools/tool4')
       break
     case 'settings':
       router.push('/settings')

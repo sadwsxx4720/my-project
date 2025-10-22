@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Monitor, Tools, Setting } from '@element-plus/icons-vue'
+import { Monitor, Tools, Setting, Key, User } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -34,8 +34,14 @@ definePageMeta({
                     </li>
                     <li>
                       <el-link type="primary" @click="router.push('/tools/tool1')">
-                        <el-icon><Tools /></el-icon>
-                        金鑰管理模組
+                        <el-icon><Key /></el-icon>
+                        金鑰管理
+                      </el-link>
+                    </li>
+                    <li>
+                      <el-link type="primary" @click="router.push('/settings')">
+                        <el-icon><User /></el-icon>
+                        帳號管理
                       </el-link>
                     </li>
                     <li>
