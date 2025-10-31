@@ -5,6 +5,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
+              <span>金鑰統計圖表</span>
             </div>
           </template>
 
@@ -34,6 +35,7 @@
 
 
             <el-row :gutter="20" class="filter-row chart-filter-row">
+
               <el-col :span="12">
                 <el-select
                   v-model="selectedCloudType"
@@ -96,7 +98,7 @@ const router = useRouter();
 const auth = useAuthStore();
 const loading = ref(true);
 const keys = ref<any[]>([]); // 原始 /keys/get_all 數據
-const cloudServices = ref<any[]>([]); // *** 新增：/clouds/get_all 數據 ***
+const cloudServices = ref<any[]>([]); // /clouds/get_all 數據
 const selectedChart = ref('age');
 let mainChart: Chart | null = null;
 
@@ -104,9 +106,11 @@ const selectedCloudType = ref('all'); // Cloud Type 篩選狀態
 
 Chart.defaults.font.size = 14;
 
+// *** 修改：新增 'rotation' 選項 ***
 const chartOptions = [
   { value: 'age', label: '金鑰建立天數分佈 (長條圖)' },
   { value: 'usage', label: '金鑰活躍度 (點陣圖)' },
+  { value: 'rotation', label: '金鑰到期狀態圖 (圓餅圖)' }, // *** 新增 ***
   { value: 'status', label: '金鑰啟用/停用比例 (圓餅圖)' }
 ];
 
@@ -154,7 +158,7 @@ const filteredKeysByCodename = computed<any[]>(() => {
     try {
         const allFetchedKeys = Array.isArray(keys.value) ? keys.value : [];
         const currentSelectedCode = auth.currentSelectedCodename;
-        const allowedUserCodes = auth.availableCodename;
+        const allowedUserCodes = auth.availableCodename; // 注意：您 store 中的 getter 是 availableCodename (單數)
 
         if (!Array.isArray(allowedUserCodes) || !currentSelectedCode) {
              console.warn("filteredKeysByCodename: Auth data not ready.");
@@ -243,23 +247,53 @@ const computedUsageData = computed(() => {
 });
 const computedStatusData = computed(() => ({ active: activeKeys.value, disabled: disabledKeys.value }));
 
+// *** 新增：計算 Rotation Status 數據 ***
+const computedRotationStatusData = computed(() => {
+    const groups = {
+        '應輪替': 0,
+        '即將輪替': 0,
+        '不需輪替': 0,
+    };
+    
+    if (Array.isArray(filteredKeysByCodenameAndType.value)) {
+        filteredKeysByCodenameAndType.value.forEach(k => {
+          const state = k.rotation_state; // 獲取輪替狀態欄位
+            if (state === 'Valid') { 
+                groups['不需輪替']++;
+            } else if (state === 'Expiring soon') { 
+                groups['即將輪替']++;
+            } else if (state === 'Expired') { 
+                groups['應輪替']++;
+            }
+        });
+    }
+    return groups;
+});
+
+
 // --- Chart Rendering ---
+// *** 修改：renderSelectedChart 新增 case ***
 const renderSelectedChart = async () => {
     await nextTick();
     const canvasElement = document.getElementById('mainChart') as HTMLCanvasElement | null;
     if (!canvasElement) { console.error('找不到 #mainChart canvas 元素'); return; }
+    
+    if (mainChart) { mainChart.destroy(); mainChart = null; }
+    // 重置樣式
+    canvasElement.style.minWidth = 'auto';
+    canvasElement.style.width = '100%';
+    canvasElement.style.height = '300px'; // 匹配 CSS
+    
     const ctx = canvasElement.getContext('2d');
     if (!ctx) { console.error('無法獲取 Canvas 的 2D context'); return; }
-    if (mainChart) { mainChart.destroy(); mainChart = null; }
-    canvasElement.style.minWidth = 'auto';
-    canvasElement.style.width = '100%'; // 確保恢復 100% 寬度
-    canvasElement.style.height = '300px'; // 恢復 CSS 中設定的高度
-
+    
     console.log(`Rendering chart: ${selectedChart.value} for codename: ${auth.currentSelectedCodename}, cloudType: ${selectedCloudType.value}`);
     try {
         switch (selectedChart.value) {
             case 'age': drawAgeChart(ctx, computedAgeGroups.value); break;
             case 'usage': drawUsageChart(ctx, computedUsageData.value); break;
+            // *** 新增 case ***
+            case 'rotation': drawRotationStatusChart(ctx, computedRotationStatusData.value); break;
             case 'status': drawStatusChart(ctx, computedStatusData.value); break;
         }
     } catch (error) {
@@ -274,7 +308,14 @@ const commonChartOptions = { responsive: true, maintainAspectRatio: false };
 
 const drawAgeChart = (ctx: ChartItem, ageData: Record<string, number>): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawAgeChart: Invalid ctx."); return; }
-    if (ctx.canvas) { ctx.canvas.style.minWidth = 'auto'; ctx.canvas.style.width = '100%';}
+    
+    // 確保 Canvas 樣式被重置
+    if (ctx.canvas) {
+        ctx.canvas.style.minWidth = 'auto';
+        ctx.canvas.style.width = '100%';
+        ctx.canvas.style.height = '300px'; // 匹配 CSS
+    }
+
     const data: ChartData<'bar'> = { labels: Object.keys(ageData), datasets: [{ label: '金鑰數量', data: Object.values(ageData), backgroundColor: ['#85C1E9', '#F8C471', '#F1948A'], borderColor: ['#3498DB', '#F39C12', '#E74C3C'], borderWidth: 1 }] };
     const options: ChartOptions<'bar'> = { ...commonChartOptions, plugins: { title: { display: true, text: '金鑰建立天數分佈' }, legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: '金鑰數量' }, grid: { borderDash: [2, 4], color: '#D0D0D0' } }, x: { title: { display: true, text: '天數區間' } } } };
     mainChart = new Chart(ctx, { type: 'bar', data, options });
@@ -313,9 +354,7 @@ const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }
     const estimatedMinWidth = usageChartData.length * 60 + 100;
     const finalMinWidth = Math.max(600, estimatedMinWidth);
     ctx.canvas.style.minWidth = `${finalMinWidth}px`;
-    // *** 新增：確保 CSS 寬度也更新，以匹配動態 min-width ***
     ctx.canvas.style.width = `${finalMinWidth}px`; 
-    // *** 新增：確保高度匹配 CSS ***
     ctx.canvas.style.height = '300px';
 
     mainChart = new Chart(ctx, { type: 'scatter', data, options });
@@ -323,17 +362,81 @@ const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }
 
 const drawStatusChart = (ctx: ChartItem, statusChartData: { active: number; disabled: number }): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawStatusChart: Invalid ctx."); return; }
-    if (ctx.canvas) {ctx.canvas.style.minWidth = 'auto';ctx.canvas.style.width = '100%';}
+    
+    // 確保 Canvas 樣式被重置
+    if (ctx.canvas) {
+        ctx.canvas.style.minWidth = 'auto';
+        ctx.canvas.style.width = '100%';
+        ctx.canvas.style.height = '300px'; // 匹配 CSS
+    }
+
     const total = statusChartData.active + statusChartData.disabled;
     const data: ChartData<'pie'> = { labels: ['啟用', '停用'], datasets: [{ label: '金鑰狀態', data: [statusChartData.active, statusChartData.disabled], backgroundColor: ['#6cb26c', '#dd514c'], borderColor: ['#FFFFFF'], borderWidth: 2, hoverOffset: 4 }] };
     const options: ChartOptions<'pie'> = { ...commonChartOptions, plugins: { title: { display: true, text: '金鑰啟用/停用比例' }, legend: { position: 'bottom' }, tooltip: { callbacks: { label: (context) => { let l=context.label||''; if(l)l+=': '; const v=context.raw as number; const p=total>0?((v/total)*100).toFixed(1)+'%':'0%'; return `${l}${v} 筆 (${p})`; } } } } };
     mainChart = new Chart(ctx, { type: 'pie', data, options });
 };
 
+// *** 新增：繪製 Rotation Status 圖表 (Pie) ***
+const drawRotationStatusChart = (ctx: ChartItem, rotationData: Record<string, number>): void => {
+    if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawRotationStatusChart: Invalid ctx."); return; }
+    
+    // 確保 Canvas 樣式被重置
+    if (ctx.canvas) {
+        ctx.canvas.style.minWidth = 'auto';
+        ctx.canvas.style.width = '100%';
+        ctx.canvas.style.height = '300px'; // 匹配 CSS
+    }
+
+    const labels = Object.keys(rotationData);
+    const dataValues = Object.values(rotationData);
+    const total = dataValues.reduce((a, b) => a + b, 0);
+
+    // 定義顏色 (可自訂)
+    const colors = {
+        '應輪替': '#F56C6C', // 紅色 (緊急)
+        '即將輪替': '#E6A23C', // 橘色 (警告)
+        '不需輪替': '#67C23A', // 綠色 (正常)
+    };
+
+    const data: ChartData<'pie'> = {
+        labels: labels,
+        datasets: [{
+            label: '輪替狀態',
+            data: dataValues,
+            backgroundColor: labels.map(label => colors[label as keyof typeof colors] || '#909399'),
+            borderColor: ['#FFFFFF'],
+            borderWidth: 2,
+            hoverOffset: 4
+        }]
+    };
+    
+    const options: ChartOptions<'pie'> = {
+        ...commonChartOptions,
+        plugins: {
+            title: { display: true, text: '金鑰到期狀態圖' },
+            legend: { position: 'bottom' },
+            tooltip: {
+                callbacks: {
+                    label: (context) => {
+                        let label = context.label || '';
+                        if (label) label += ': ';
+                        const value = context.raw as number;
+                        // *** 注意：這裡的 total 是 rotationData 的總和 ***
+                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) + '%' : '0%';
+                        return `${label}${value} 筆 (${percentage})`;
+                    }
+                }
+            }
+        }
+    };
+
+    mainChart = new Chart(ctx, { type: 'pie', data, options });
+};
+
+
 // --- Watchers ---
 // *** 修改：監聽所有篩選器 ***
 watch([() => auth.currentSelectedCodename, selectedCloudType, selectedChart], (newValues, oldValues) => {
-    // 檢查是否在 loading，並且至少有一個值發生了變化
     const valuesChanged = JSON.stringify(newValues) !== JSON.stringify(oldValues);
     if (valuesChanged && !loading.value) {
         console.log(`Filters changed, re-rendering chart.`);
@@ -375,23 +478,21 @@ onMounted(async () => {
 h3 { margin: 0 0 5px; color: #606266; font-size: 0.9em; }
 .filter-row { margin-bottom: 15px; }
 .chart-row { margin-top: 0; }
+
 .chart-container {
   position: relative;
-  /* *** 保持固定的高度和溢出 *** */
-  height: 700px; 
-  /* min-height: 300px; */
-  /* max-height: 600px; */
+  /* *** 修改：設定固定高度 *** */
+  height: 350px; 
   margin: 0 auto;
-  overflow-x: auto; 
+  overflow-x: auto; /* 保留水平滾動 (僅點陣圖會用到) */
   overflow-y: hidden;
 }
 .chart-container canvas {
     display: block;
-    /* *** 保持固定的高度 *** */
-    height: 700px !important; /* 強制高度 */
-    min-height: 700px !important; /* 強制最小高度 */
+    /* *** 修改：設定固定高度 *** */
+    height: 300px !important; /* 強制高度 */
+    min-height: 300px !important; /* 強制最小高度 */
     
-    /* *** 寬度由 JS (點陣圖) 或 100% (其他) 控制 *** */
     width: 100%; 
     /* min-width: 600px; */ /* 移除靜態 min-width */
 }

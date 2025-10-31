@@ -70,8 +70,6 @@ const fetchKeyDetails = async () => {
              errorMsg = `金鑰 ${currentKeyId} 資料格式錯誤`;
         }
         ElMessage.warning(errorMsg);
-        // 可以在 fetchedDetails 加入錯誤標記物件，如果需要在模板中顯示
-        // fetchedDetails.push({ key_id: currentKeyId, error: true, message: errorMsg });
       }
     });
 
@@ -79,16 +77,12 @@ const fetchKeyDetails = async () => {
     keyDetails.value = keyIds.map(id => fetchedDetails.find(detail => detail.key_id === id)).filter(Boolean);
 
     if (keyDetails.value.length === 0 && hasError) {
-        // 如果所有請求都失敗了
         ElMessage.warning('無法獲取任何指定的金鑰資訊');
-        // 考慮是否跳轉回列表頁
-        // router.replace('/tools/tool1');
     }
 
   } catch (err) {
       console.error("處理金鑰詳細資料請求時發生意外錯誤:", err);
       ElMessage.error('獲取金鑰詳細資料時發生未知錯誤');
-      // router.replace('/tools/tool1');
   } finally {
     loading.value = false
   }
@@ -152,7 +146,12 @@ const handleDelete = async (keyIdToDelete: string) => {
 
 // Helper function to format date or return 'N/A'
 const formatDate = (dateString: string | null | undefined) => {
-    return dateString ? new Date(dateString).toLocaleString() : 'N/A';
+    try {
+        return dateString ? new Date(dateString).toLocaleString() : 'N/A';
+    } catch (e) {
+        console.warn(`Invalid date format for: ${dateString}`);
+        return 'Invalid Date';
+    }
 }
 
 onMounted(fetchKeyDetails)
@@ -165,13 +164,15 @@ onMounted(fetchKeyDetails)
         <span>關聯金鑰詳細資訊</span>
       </template>
 
-      <el-skeleton v-if="loading" :rows="keyIds.length * 6" animated /> 
+      <el-skeleton v-if="loading" :rows="keyIds.length * 6" animated />
 
       <div v-else-if="keyDetails.length > 0">
         <div v-for="(key, index) in keyDetails" :key="key.key_id || index" class="key-block">
-            <h4>Key {{ index + 1 }} / ID: {{ key.key_id }}</h4>
+            <h4>金鑰 {{ index + 1 }} / ID: {{ key.key_id }}</h4>
             <el-descriptions border :column="1">
-              <el-descriptions-item label="狀態">{{ key.key_state }}</el-descriptions-item>
+              <el-descriptions-item label="狀態">{{ key.key_state || 'N/A' }}</el-descriptions-item>
+              {/* *** 新增：輪替狀態欄位 *** */}
+              <el-descriptions-item label="輪替狀態">{{ key.rotation_state || 'N/A' }}</el-descriptions-item>
               <el-descriptions-item label="建立時間">{{ formatDate(key.key_create_time) }}</el-descriptions-item>
               <el-descriptions-item label="最後使用時間">{{ formatDate(key.key_last_time_used) || '尚未使用' }}</el-descriptions-item>
               <el-descriptions-item label="描述">{{ key.key_description || 'N/A' }}</el-descriptions-item>
@@ -216,12 +217,12 @@ onMounted(fetchKeyDetails)
     margin-top: 0;
     margin-bottom: 15px;
     color: #303133;
-    font-size: 1.1em; /* 稍微加大標題 */
+    font-size: 1.1em;
 }
 .el-descriptions {
     margin-bottom: 15px;
 }
 .el-divider {
-    margin: 30px 0; /* 加大分隔線間距 */
+    margin: 30px 0;
 }
 </style>

@@ -15,10 +15,10 @@ const auth = useAuthStore()
 const logs = ref<any[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
-const selectedUsername = ref<string | null>('all')
+const selectedUsername = ref<string | null>(null) // 修改：預設為 null
 const isCurrentUserAdmin = ref(false)
 
-// --- 新增：Dialog 相關 Refs ---
+// --- Dialog 相關 Refs ---
 const dialogVisible = ref(false)
 const selectedLogDetail = ref('')
 
@@ -26,32 +26,56 @@ const selectedLogDetail = ref('')
 
 const isAdmin = computed(() => isCurrentUserAdmin.value)
 const currentUsername = computed(() => auth.user?.username)
+
+// *** 修改：移除 'all' 選項 ***
 const allUsernames = computed(() => {
   if (!isAdmin.value) { return [] }
   const usernames = [...new Set(logs.value.map(log => log.username))]
   return usernames.sort()
 })
 
+// *** 修改：過濾邏輯 ***
 const filteredLogs = computed(() => {
   let filtered = logs.value
+  
+  // 1. Role-based pre-filtering
   if (!isAdmin.value && currentUsername.value) {
     filtered = filtered.filter(log => log.username === currentUsername.value)
   }
-  if (isAdmin.value && selectedUsername.value && selectedUsername.value !== 'all') {
+
+  // 2. Admin Username Dropdown Filter
+  // *** 修改：移除 'all' 檢查 ***
+  if (isAdmin.value && selectedUsername.value) { // 檢查 selectedUsername 是否有值
     filtered = filtered.filter(log => log.username === selectedUsername.value)
   }
+
+  // 3. Search Query Filter
   const query = searchQuery.value.toLowerCase().trim()
   if (query) {
     filtered = filtered.filter(log => {
+      
+      // --- *** 這裡是修改後的搜尋邏輯 (START) *** ---
+      
+      // 1. 檢查使用者可見的「格式化後」的欄位
       const timeFormatted = formatDate(log.execution_time).toLowerCase()
-      const resultText = log.execution_result ? '成功' : '失敗'
-      return (
-        log.username?.toLowerCase().includes(query) ||
-        log.action?.toLowerCase().includes(query) ||
-        timeFormatted.includes(query) ||
-        resultText.toLowerCase().includes(query) ||
-        log.detail?.toLowerCase().includes(query) // 雖然不顯示，但搜尋仍包含 detail
-      )
+      const resultText = (log.execution_result ? '成功' : '失敗').toLowerCase()
+
+      if (timeFormatted.includes(query) || resultText.includes(query)) {
+        return true;
+      }
+
+      // 2. 檢查 log 物件中的「所有」原始值 (轉換為字串)
+      //    這會涵蓋 username, action, detail, 以及任何其他欄位
+      return Object.values(log).some(value => {
+        if (value === null || value === undefined) {
+          return false;
+        }
+        // 將所有值（數字、布林值、字串）轉為字串並搜尋
+        return String(value).toLowerCase().includes(query);
+      });
+      
+      // --- *** 這裡是修改後的搜尋邏輯 (END) *** ---
+
     })
   }
   return filtered
@@ -113,9 +137,13 @@ const fetchLogs = async () => {
     if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
       logs.value = res.data.data
       console.log(`Fetched ${logs.value.length} logs.`);
+      
+      // *** 修改：設置預設下拉選單值 ***
       if (isAdmin.value) {
-          selectedUsername.value = 'all';
+          // 如果是 Admin，預設為當前登入的 Admin 帳號
+          selectedUsername.value = currentUsername.value || null; 
       }
+      
     } else {
       console.error('Log API response format error:', res.data)
       ElMessage.warning(res.data.message || '無法獲取日誌資料或格式錯誤')
@@ -137,10 +165,19 @@ const formatDate = (dateString: string | null | undefined): string => {
      }
 };
 
-// *** 新增：處理查看詳細按鈕點擊 ***
+// 處理查看詳細按鈕點擊
 const handleViewDetail = (logEntry: any) => {
-    selectedLogDetail.value = logEntry.detail || '沒有詳細資訊'; // 設置要顯示的內容
-    dialogVisible.value = true; // 打開對話框
+    // *** 修改：跳轉到新頁面 ***
+    try {
+        const logDataString = JSON.stringify(logEntry);
+        router.push({ 
+            path: '/log/detail', // *** 跳轉到新的詳細頁面 ***
+            query: { data: logDataString } // *** 傳遞序列化的數據 ***
+        });
+    } catch (e) {
+        console.error("無法序列化日誌數據:", e);
+        ElMessage.error("無法顯示詳細資訊");
+    }
 }
 
 // --- Lifecycle ---
@@ -177,7 +214,6 @@ onMounted(async () => {
               clearable
               filterable
             >
-              <el-option label="全部使用者" value="all"></el-option>
               <el-option
                 v-for="username in allUsernames"
                 :key="username"
@@ -198,26 +234,24 @@ onMounted(async () => {
       </template>
 
       <div class="table-container">
-        <el-table :data="filteredLogs" v-loading="loading" style="width: 100%" border stripe height="600">
-          <el-table-column prop="username" label="使用者帳號" width="150" sortable />
-          <el-table-column prop="action" label="操作行為" width="180" sortable />
-          <el-table-column prop="execution_time" label="執行時間" width="200" sortable>
+        <el-table :data="filteredLogs" v-loading="loading" style="width: 100%" border stripe>
+          {/* *** 修改：移除所有 width 屬性 *** */}
+          <el-table-column prop="username" label="使用者帳號" sortable />
+          <el-table-column prop="action" label="操作行為" sortable />
+          <el-table-column prop="execution_time" label="執行時間" sortable>
             <template #default="scope">
               {{ formatDate(scope.row.execution_time) }}
             </template>
           </el-table-column>
-          <el-table-column prop="execution_result" label="執行結果" width="100" align="center">
+          <el-table-column prop="execution_result" label="執行結果" align="center" width="100">
             <template #default="scope">
               <el-tag :type="scope.row.execution_result ? 'success' : 'danger'">
                 {{ scope.row.execution_result ? '成功' : '失敗' }}
               </el-tag>
             </template>
           </el-table-column>
-          {/* *** 修改：移除 Detail 欄位 *** */}
-          {/* <el-table-column prop="detail" label="詳細資訊" min-width="300" show-overflow-tooltip /> */}
-
-          {/* *** 新增：操作欄位 *** */}
-          <el-table-column label="操作" width="120" align="center">
+          
+          <el-table-column label="操作" align="center" width="120"> 
             <template #default="scope">
               <el-button
                 size="small"
@@ -225,7 +259,7 @@ onMounted(async () => {
                 link
                 @click="handleViewDetail(scope.row)"
               >
-                查看詳細
+                查看詳細內容
               </el-button>
             </template>
           </el-table-column>
@@ -233,19 +267,6 @@ onMounted(async () => {
       </div>
     </el-card>
 
-    <el-dialog
-        v-model="dialogVisible"
-        title="詳細資訊"
-        width="50%"
-        draggable
-      >
-      <pre style="white-space: pre-wrap; word-wrap: break-word;">{{ selectedLogDetail }}</pre>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="dialogVisible = false">關閉</el-button>
-        </span>
-      </template>
-    </el-dialog>
 
   </div>
 </template>
@@ -255,14 +276,10 @@ onMounted(async () => {
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .filter-controls { display: flex; align-items: center; }
 .table-container { width: 100%; }
-.el-table :deep(.el-table__header-wrapper) { position: sticky; top: 0; z-index: 10; background-color: white; /* 確保表頭背景不透明 */}
 
-/* Dialog 內容樣式 (可選) */
-pre {
-    background-color: #f8f8f8;
-    padding: 15px;
-    border-radius: 4px;
-    max-height: 400px; /* 限制最大高度 */
-    overflow-y: auto; /* 超出時內部滾動 */
-}
+/* *** 修改：移除 sticky header 樣式 *** */
+/* .el-table :deep(.el-table__header-wrapper) { ... } */
+
+/* 移除 Dialog 相關樣式 */
+/* pre { ... } */
 </style>
