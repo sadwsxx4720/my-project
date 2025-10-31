@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 // 啟動時自動載入 localStorage 中的 token
 const auth = useAuthStore()
 onMounted(() => {
-  auth.loadToken()
+  auth.initializeAuth()
 })
 </script>
 //---------新增部分---------s

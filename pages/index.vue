@@ -15,7 +15,7 @@ definePageMeta({
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>RD3 Cloud Tool</span>
+              <span>金鑰管理平台</span>
             </div>
           </template>
           <div class="welcome-content">
