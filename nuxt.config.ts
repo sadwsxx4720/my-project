@@ -9,4 +9,12 @@ export default defineNuxtConfig({
     importStyle: 'css',
     themes: ['dark']
   },
+  vite: {
+    ssr: {
+      noExternal: ['form-data']
+    },
+    optimizeDeps: {
+      exclude: ['form-data']
+    }
+  }
 })
