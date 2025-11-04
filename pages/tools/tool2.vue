@@ -17,8 +17,9 @@ const keyIds = keyIdsString ? keyIdsString.split(',').map(id => id.trim()).filte
 // 使用陣列儲存多個金鑰詳細資料
 const keyDetails = ref<any[]>([])
 const loading = ref(false)
+
 // 使用 Map 追蹤每個刪除按鈕的 loading 狀態
-const deleting = ref<Record<string, boolean>>({})
+//const deleting = ref<Record<string, boolean>>({})
 
 // 驗證是否有 keyIds
 if (keyIds.length === 0) {
@@ -87,7 +88,7 @@ const fetchKeyDetails = async () => {
     loading.value = false
   }
 }
-
+/*
 // 停用按鈕 (接受 keyId)
 const handleDisable = (keyId: string) => {
   ElMessage.success(`金鑰 ${keyId} 已停用（僅前端示意）`)
@@ -142,7 +143,7 @@ const handleDelete = async (keyIdToDelete: string) => {
   } finally {
     deleting.value[keyIdToDelete] = false
   }
-}
+} */
 
 // Helper function to format date or return 'N/A'
 const formatDate = (dateString: string | null | undefined) => {
@@ -161,7 +162,7 @@ onMounted(fetchKeyDetails)
   <div class="key-detail-page" style="padding: 20px;">
     <el-card>
       <template #header>
-        <span>關聯金鑰詳細資訊</span>
+        <span>金鑰詳細資訊</span>
       </template>
 
       <el-skeleton v-if="loading" :rows="keyIds.length * 6" animated />
@@ -171,7 +172,6 @@ onMounted(fetchKeyDetails)
             <h4>金鑰 {{ index + 1 }} / ID: {{ key.key_id }}</h4>
             <el-descriptions border :column="1">
               <el-descriptions-item label="狀態">{{ key.key_state || 'N/A' }}</el-descriptions-item>
-              {/* *** 新增：輪替狀態欄位 *** */}
               <el-descriptions-item label="輪替狀態">{{ key.rotation_state || 'N/A' }}</el-descriptions-item>
               <el-descriptions-item label="建立時間">{{ formatDate(key.key_create_time) }}</el-descriptions-item>
               <el-descriptions-item label="最後使用時間">{{ formatDate(key.key_last_time_used) || '尚未使用' }}</el-descriptions-item>
@@ -181,17 +181,6 @@ onMounted(fetchKeyDetails)
                  <span v-else>N/A</span>
               </el-descriptions-item>
             </el-descriptions>
-
-            <div style="margin-top: 15px; margin-bottom: 25px;">
-              <el-button type="warning" @click="handleDisable(key.key_id)">停用</el-button>
-              <el-button
-                type="danger"
-                @click="handleDelete(key.key_id)"
-                :loading="deleting[key.key_id]"
-              >
-                刪除
-              </el-button>
-            </div>
             <el-divider v-if="index < keyDetails.length - 1" />
         </div>
 
