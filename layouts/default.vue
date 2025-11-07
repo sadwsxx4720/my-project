@@ -110,33 +110,7 @@ const selectedCodenameModel = computed({
 
 // --- Methods ---
 const handleLogout = async () => {
-  const username = auth.user?.username;
-  const savedToken = auth.token; // 使用 store 中的 token
-
-  if (username && savedToken) {
-    try {
-      console.log(`Calling logout API (GET) for user: ${username}`);
-      await axios.get('http://localhost:8000/jwt/logout', {
-        headers: { Authorization: `Bearer ${savedToken}` },
-        params: { username: username }
-      });
-      console.log('Backend logout successful.');
-    } catch (apiErr: any) {
-      console.error('呼叫登出 API 時發生錯誤:', apiErr.response?.data || apiErr.message || apiErr);
-    }
-  } else { console.warn('無法呼叫登出 API：缺少 username 或 token'); }
-
-  try {
-    console.log('Executing frontend logout (auth.logout())...');
-    await auth.logout();
-    console.log('Frontend logout complete.');
-  } catch (storeErr) {
-    console.error('前端登出 (auth.logout) 失敗：', storeErr);
-    ElMessage.error('登出過程中發生錯誤，請重試');
-    if (typeof window !== 'undefined') localStorage.removeItem('auth_token');
-    auth.$reset();
-    router.push('/login');
-  }
+  await auth.logout();
 }
 const handleMenuSelect = (index: string) => {
   switch (index) {
