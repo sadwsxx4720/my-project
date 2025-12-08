@@ -106,11 +106,10 @@ const selectedCloudType = ref('all'); // Cloud Type 篩選狀態
 
 Chart.defaults.font.size = 14;
 
-// *** 修改：新增 'rotation' 選項 ***
 const chartOptions = [
   { value: 'age', label: '金鑰建立天數分佈 (長條圖)' },
   { value: 'usage', label: '金鑰活躍度 (點陣圖)' },
-  { value: 'rotation', label: '金鑰到期狀態圖 (圓餅圖)' }, // *** 新增 ***
+  { value: 'rotation', label: '金鑰到期狀態圖 (圓餅圖)' }, 
   { value: 'status', label: '金鑰啟用/停用比例 (圓餅圖)' }
 ];
 
@@ -121,6 +120,8 @@ const fetchKeys = async (): Promise<boolean> => {
     if (!savedToken) { ElMessage.error('尚未登入'); router.push('/login'); return false; }
     console.log('Fetching keys from API...');
     const res = await axios.get('http://localhost:8000/keys/get_all', { headers: { Authorization: `Bearer ${savedToken}` } });
+    
+    // 【保持】API 狀態碼為 200
     if (res.data?.code === 200 && Array.isArray(res.data.data)) {
       console.log('Raw API Data (/keys/get_all):', JSON.parse(JSON.stringify(res.data.data)));
       keys.value = res.data.data;
@@ -130,12 +131,14 @@ const fetchKeys = async (): Promise<boolean> => {
   } catch (err) { ElMessage.error('無法取得金鑰資料'); keys.value = []; return false; }
 };
 
-// *** 新增：獲取雲服務資料 (用於 Cloud Type 選單和篩選) ***
+// 獲取雲服務資料 (用於 Cloud Type 選單和篩選)
 const fetchCloudServices = async (): Promise<boolean> => {
   try {
     const savedToken = localStorage.getItem('auth_token');
     if (!savedToken) { ElMessage.error('尚未登入'); router.push('/login'); return false; }
     const res = await axios.get('http://localhost:8000/clouds/get_all', { headers: { Authorization: `Bearer ${savedToken}` } });
+    
+    // 【保持】API 狀態碼為 200
     if (res.data?.code === 200 && Array.isArray(res.data.data)) {
       cloudServices.value = res.data.data;
       console.log(`Fetched ${cloudServices.value.length} cloud services.`);
@@ -147,7 +150,6 @@ const fetchCloudServices = async (): Promise<boolean> => {
 
 // --- Computed Properties for Filtering and Stats ---
 
-// *** 修改：從 cloudServices.value 中提取 Cloud Types ***
 const availableCloudTypes = computed(() => {
     const types = new Set(cloudServices.value.map(service => service.cloud_type).filter(Boolean));
     return ['all', ...Array.from(types)];
@@ -158,7 +160,7 @@ const filteredKeysByCodename = computed<any[]>(() => {
     try {
         const allFetchedKeys = Array.isArray(keys.value) ? keys.value : [];
         const currentSelectedCode = auth.currentSelectedCodename;
-        const allowedUserCodes = auth.availableCodename; // 注意：您 store 中的 getter 是 availableCodename (單數)
+        const allowedUserCodes = auth.availableCodename; 
 
         if (!Array.isArray(allowedUserCodes) || !currentSelectedCode) {
              console.warn("filteredKeysByCodename: Auth data not ready.");
@@ -167,12 +169,14 @@ const filteredKeysByCodename = computed<any[]>(() => {
         
         if (currentSelectedCode === 'all') {
             if (allowedUserCodes.length === 0) return [];
+            // 【修正】key.codename 是字串，檢查是否在允許列表中
             return allFetchedKeys.filter(key => 
-                (Array.isArray(key?.codename) ? key.codename : []).some((kc: string) => allowedUserCodes.includes(kc))
+                key.codename && allowedUserCodes.includes(key.codename)
             );
         } else {
+            // 【修正】key.codename 是字串，直接比對
             return allFetchedKeys.filter(key => 
-                (Array.isArray(key?.codename) ? key.codename : []).includes(currentSelectedCode)
+                key.codename === currentSelectedCode
             );
         }
     } catch (error) { console.error("Error computing filteredKeysByCodename:", error); return []; }
@@ -189,18 +193,23 @@ const filteredKeysByCodenameAndType = computed<any[]>(() => {
 
         if (currentCloudType === 'all') {
             console.log("[Debug Filter] Step 2: Cloud Type is 'all'. Returning Step 1 results.");
-            return codenameFilteredKeys; // 如果選 'all'，返回已按 codename 過濾的結果
+            return codenameFilteredKeys; 
         }
 
         // *** 反向查找 ***
-        // 1. 獲取所有符合選中 Cloud Type 的服務 (從 /clouds/get_all)
+        // 1. 獲取所有符合選中 Cloud Type 的服務
         const matchingServices = (Array.isArray(cloudServices.value) ? cloudServices.value : [])
             .filter(s => s.cloud_type === currentCloudType);
             
         // 2. 從這些服務中提取所有關聯的 key_id
         const allowedKeyIds = new Set<string>();
         matchingServices.forEach(s => {
-            if (Array.isArray(s.key_id)) {
+            // 【修正】兼容 keys 陣列 (物件) 與 key_id 陣列 (字串) 兩種格式，確保篩選正確
+            if (Array.isArray(s.keys)) {
+                s.keys.forEach((k: any) => {
+                   if (k.key_id) allowedKeyIds.add(k.key_id);
+                });
+            } else if (Array.isArray(s.key_id)) {
                 s.key_id.forEach((id: string) => allowedKeyIds.add(id));
             }
         });
@@ -226,13 +235,11 @@ const filteredKeysByCodenameAndType = computed<any[]>(() => {
 });
 
 
-// *** 修改：所有統計數據基於新的 `filteredKeysByCodenameAndType` ***
 const totalKeys = computed(() => Array.isArray(filteredKeysByCodenameAndType.value) ? filteredKeysByCodenameAndType.value.length : 0);
 const activeKeys = computed(() => Array.isArray(filteredKeysByCodenameAndType.value) ? filteredKeysByCodenameAndType.value.filter(k => k.key_state?.toLowerCase() === 'active').length : 0);
 const disabledKeys = computed(() => totalKeys.value - activeKeys.value);
 
 // --- Computed Properties for Chart Data ---
-// *** 修改：所有圖表數據基於新的 `filteredKeysByCodenameAndType` ***
 const computedAgeGroups = computed(() => {
     const groups = { '90天內': 0, '90-180天': 0, '1年以上': 0 }; const now = Date.now();
     if (Array.isArray(filteredKeysByCodenameAndType.value)) {
@@ -247,7 +254,6 @@ const computedUsageData = computed(() => {
 });
 const computedStatusData = computed(() => ({ active: activeKeys.value, disabled: disabledKeys.value }));
 
-// *** 新增：計算 Rotation Status 數據 ***
 const computedRotationStatusData = computed(() => {
     const groups = {
         '應輪替': 0,
@@ -257,7 +263,7 @@ const computedRotationStatusData = computed(() => {
     
     if (Array.isArray(filteredKeysByCodenameAndType.value)) {
         filteredKeysByCodenameAndType.value.forEach(k => {
-          const state = k.rotation_state; // 獲取輪替狀態欄位
+          const state = k.rotation_state; 
             if (state === 'Valid') { 
                 groups['不需輪替']++;
             } else if (state === 'Expiring soon') { 
@@ -272,7 +278,6 @@ const computedRotationStatusData = computed(() => {
 
 
 // --- Chart Rendering ---
-// *** 修改：renderSelectedChart 新增 case ***
 const renderSelectedChart = async () => {
     await nextTick();
     const canvasElement = document.getElementById('mainChart') as HTMLCanvasElement | null;
@@ -282,7 +287,7 @@ const renderSelectedChart = async () => {
     // 重置樣式
     canvasElement.style.minWidth = 'auto';
     canvasElement.style.width = '100%';
-    canvasElement.style.height = '300px'; // 匹配 CSS
+    canvasElement.style.height = '300px'; 
     
     const ctx = canvasElement.getContext('2d');
     if (!ctx) { console.error('無法獲取 Canvas 的 2D context'); return; }
@@ -292,7 +297,6 @@ const renderSelectedChart = async () => {
         switch (selectedChart.value) {
             case 'age': drawAgeChart(ctx, computedAgeGroups.value); break;
             case 'usage': drawUsageChart(ctx, computedUsageData.value); break;
-            // *** 新增 case ***
             case 'rotation': drawRotationStatusChart(ctx, computedRotationStatusData.value); break;
             case 'status': drawStatusChart(ctx, computedStatusData.value); break;
         }
@@ -309,11 +313,10 @@ const commonChartOptions = { responsive: true, maintainAspectRatio: false };
 const drawAgeChart = (ctx: ChartItem, ageData: Record<string, number>): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawAgeChart: Invalid ctx."); return; }
     
-    // 確保 Canvas 樣式被重置
     if (ctx.canvas) {
         ctx.canvas.style.minWidth = 'auto';
         ctx.canvas.style.width = '100%';
-        ctx.canvas.style.height = '300px'; // 匹配 CSS
+        ctx.canvas.style.height = '300px'; 
     }
 
     const data: ChartData<'bar'> = { labels: Object.keys(ageData), datasets: [{ label: '金鑰數量', data: Object.values(ageData), backgroundColor: ['#85C1E9', '#F8C471', '#F1948A'], borderColor: ['#3498DB', '#F39C12', '#E74C3C'], borderWidth: 1 }] };
@@ -324,8 +327,6 @@ const drawAgeChart = (ctx: ChartItem, ageData: Record<string, number>): void => 
 const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }[]): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D) || !ctx.canvas) {
         console.error("drawUsageChart: Invalid canvas context or canvas element.");
-        const canvasElement = document.getElementById('mainChart') as HTMLCanvasElement | null;
-        if(canvasElement){ const fCtx = canvasElement.getContext('2d'); if(fCtx){ fCtx.clearRect(0,0,canvasElement.width,canvasElement.height); fCtx.font="16px Arial"; fCtx.fillStyle="#888"; fCtx.textAlign="center"; fCtx.fillText("繪製圖表錯誤",canvasElement.width/2,canvasElement.height/2); }}
         return;
     }
     if (!usageChartData || usageChartData.length === 0) {
@@ -350,7 +351,7 @@ const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }
           }
         }
     };
-    // 動態寬度計算
+    
     const estimatedMinWidth = usageChartData.length * 60 + 100;
     const finalMinWidth = Math.max(600, estimatedMinWidth);
     ctx.canvas.style.minWidth = `${finalMinWidth}px`;
@@ -363,11 +364,10 @@ const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }
 const drawStatusChart = (ctx: ChartItem, statusChartData: { active: number; disabled: number }): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawStatusChart: Invalid ctx."); return; }
     
-    // 確保 Canvas 樣式被重置
     if (ctx.canvas) {
         ctx.canvas.style.minWidth = 'auto';
         ctx.canvas.style.width = '100%';
-        ctx.canvas.style.height = '300px'; // 匹配 CSS
+        ctx.canvas.style.height = '300px'; 
     }
 
     const total = statusChartData.active + statusChartData.disabled;
@@ -376,26 +376,23 @@ const drawStatusChart = (ctx: ChartItem, statusChartData: { active: number; disa
     mainChart = new Chart(ctx, { type: 'pie', data, options });
 };
 
-// *** 新增：繪製 Rotation Status 圖表 (Pie) ***
 const drawRotationStatusChart = (ctx: ChartItem, rotationData: Record<string, number>): void => {
     if (!ctx || !(ctx instanceof CanvasRenderingContext2D)) { console.error("drawRotationStatusChart: Invalid ctx."); return; }
     
-    // 確保 Canvas 樣式被重置
     if (ctx.canvas) {
         ctx.canvas.style.minWidth = 'auto';
         ctx.canvas.style.width = '100%';
-        ctx.canvas.style.height = '300px'; // 匹配 CSS
+        ctx.canvas.style.height = '300px'; 
     }
 
     const labels = Object.keys(rotationData);
     const dataValues = Object.values(rotationData);
     const total = dataValues.reduce((a, b) => a + b, 0);
 
-    // 定義顏色 (可自訂)
     const colors = {
-        '應輪替': '#F56C6C', // 紅色 (緊急)
-        '即將輪替': '#E6A23C', // 橘色 (警告)
-        '不需輪替': '#67C23A', // 綠色 (正常)
+        '應輪替': '#F56C6C', 
+        '即將輪替': '#E6A23C', 
+        '不需輪替': '#67C23A', 
     };
 
     const data: ChartData<'pie'> = {
@@ -421,7 +418,6 @@ const drawRotationStatusChart = (ctx: ChartItem, rotationData: Record<string, nu
                         let label = context.label || '';
                         if (label) label += ': ';
                         const value = context.raw as number;
-                        // *** 注意：這裡的 total 是 rotationData 的總和 ***
                         const percentage = total > 0 ? ((value / total) * 100).toFixed(1) + '%' : '0%';
                         return `${label}${value} 筆 (${percentage})`;
                     }
@@ -435,7 +431,6 @@ const drawRotationStatusChart = (ctx: ChartItem, rotationData: Record<string, nu
 
 
 // --- Watchers ---
-// *** 修改：監聽所有篩選器 ***
 watch([() => auth.currentSelectedCodename, selectedCloudType, selectedChart], (newValues, oldValues) => {
     const valuesChanged = JSON.stringify(newValues) !== JSON.stringify(oldValues);
     if (valuesChanged && !loading.value) {
@@ -445,20 +440,18 @@ watch([() => auth.currentSelectedCodename, selectedCloudType, selectedChart], (n
 });
 
 // --- Lifecycle ---
-// *** 修改：onMounted 併發獲取 keys 和 cloudServices ***
 onMounted(async () => {
     loading.value = true;
     console.log('Component Mounted: Fetching initial data...');
-    // 併發獲取金鑰和雲服務
     const [keysSuccess, cloudServicesSuccess] = await Promise.all([
         fetchKeys(),
-        fetchCloudServices() // *** 新增調用 ***
+        fetchCloudServices()
     ]);
     loading.value = false;
     console.log('Initial data fetching complete.');
-    if (keysSuccess && cloudServicesSuccess) { // 確保兩者都成功
+    if (keysSuccess && cloudServicesSuccess) { 
          await nextTick();
-         renderSelectedChart(); // 初始渲染
+         renderSelectedChart();
     } else {
         console.warn("Skipping initial chart render because data fetching failed.");
         if (!keysSuccess) ElMessage.error("初始化金鑰數據失敗");
@@ -481,7 +474,6 @@ h3 { margin: 0 0 5px; color: #606266; font-size: 0.9em; }
 
 .chart-container {
   position: relative;
-  /* *** 修改：設定固定高度 *** */
   height: 350px; 
   margin: 0 auto;
   overflow-x: auto; /* 保留水平滾動 (僅點陣圖會用到) */
@@ -489,11 +481,9 @@ h3 { margin: 0 0 5px; color: #606266; font-size: 0.9em; }
 }
 .chart-container canvas {
     display: block;
-    /* *** 修改：設定固定高度 *** */
     height: 300px !important; /* 強制高度 */
     min-height: 300px !important; /* 強制最小高度 */
     
     width: 100%; 
-    /* min-width: 600px; */ /* 移除靜態 min-width */
 }
 </style>

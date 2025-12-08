@@ -1,60 +1,71 @@
 <template>
-  <div class="dashboard-page">
+  <div class="dashboard-page" style="padding: 20px;">
     <el-row :gutter="20">
       <el-col :span="24">
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>儀表板概覽</span>
+              <span>專案概覽</span>
             </div>
           </template>
 
           <el-skeleton :rows="5" animated v-if="loading" />
 
           <div v-else>
+            <!-- 統計卡片 -->
             <el-row :gutter="20" class="stats-row">
-              <el-col :span="6">
+              <el-col :span="8">
                 <el-card shadow="hover" class="stat-card">
-                  <h3>金鑰總數</h3>
-                  <div class="stat-value">{{ totalKeys }}</div>
+                  <h3>專案總數</h3>
+                  <div class="stat-value">{{ projects.length }}</div>
                 </el-card>
               </el-col>
-              <el-col :span="6">
-                <el-card shadow="hover" class="stat-card">
-                  <h3>即將到期 (30天內)</h3>
-                  <div class="stat-value" style="color: #E6A23C;">{{ expiringKeys }}</div>
-                </el-card>
-              </el-col>
-              <el-col :span="6">
-                <el-card shadow="hover" class="stat-card">
-                  <h3>有效金鑰</h3>
-                  <div class="stat-value" style="color: #67C23A;">{{ activeKeys }}</div>
-                </el-card>
-              </el-col>
-              <el-col :span="6">
-                <el-card shadow="hover" class="stat-card">
-                  <h3>已停用金鑰</h3>
-                  <div class="stat-value" style="color: #F56C6C;">{{ disabledKeys }}</div>
+              <el-col :span="16">
+                <el-card shadow="never" class="stat-card info-card">
+                  <div class="info-text">
+                    <el-icon><InfoFilled /></el-icon>
+                    <span>請從下方列表選擇專案，以檢視詳細的金鑰或人員配置。</span>
+                  </div>
                 </el-card>
               </el-col>
             </el-row>
 
+            <!-- 專案列表表格 -->
             <el-row :gutter="20" class="action-row">
               <el-col :span="24">
                 <el-card shadow="hover">
-                  <h3>即將到期的金鑰 (前 5 筆)</h3>
-                  <el-table :data="upcomingExpirations" stripe style="width: 100%">
-                      <el-table-column prop="keyInfo" label="金鑰 ID / 描述" />
-                      <el-table-column prop="expiryDate" label="到期日期" width="200" sortable />
-                      <el-table-column label="操作" width="100">
+                  <h3>專案列表</h3>
+                  <el-table :data="projects" stripe style="width: 100%" border>
+                      <el-table-column prop="projectname" label="專案名稱" sortable />
+                      <el-table-column prop="codename" label="專案代號" sortable />
+                      
+                      <!-- 操作欄位 -->
+                      <el-table-column label="詳細資訊" width="300" align="center">
                           <template #default="scope">
-                              <el-button size="small" type="primary" link @click="viewKeyDetail(scope.row.keyId)">查看</el-button>
+                              <div class="action-buttons">
+                                <!-- 查看金鑰按鈕 -->
+                                <el-button 
+                                  size="small" 
+                                  type="warning" 
+                                  plain 
+                                  @click="navigateToDetail(scope.row, 'key')"
+                                >
+                                  查看金鑰詳細資訊
+                                </el-button>
+
+                                <!-- 查看人員按鈕 -->
+                                <el-button 
+                                  size="small" 
+                                  type="primary" 
+                                  plain 
+                                  @click="navigateToDetail(scope.row, 'user')"
+                                >
+                                  查看人員詳細資訊
+                                </el-button>
+                              </div>
                           </template>
                       </el-table-column>
                   </el-table>
-                  <div style="text-align: right; margin-top: 10px;">
-                      <el-link type="primary" @click="navigateToKeyList('expiring')">查看所有即將到期金鑰</el-link>
-                  </div>
                 </el-card>
               </el-col>
             </el-row>
@@ -66,12 +77,11 @@
 </template>
 
 <script setup lang="ts">
-// *** 移除 Chart.js 相關 import ***
-// import Chart from 'chart.js/auto'
-import { ref, computed, onMounted, nextTick } from 'vue' // 移除了 onBeforeUnmount
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { Refresh, InfoFilled, Key, User } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'default'
@@ -79,30 +89,12 @@ definePageMeta({
 
 const router = useRouter()
 
-// --- Refs for API data and loading state ---
-const loading = ref(true) 
-const allKeys = ref<any[]>([]) 
-const totalKeys = ref(0)
-const expiringKeys = ref(0) // 保持為 0
-const activeKeys = ref(0)
-const disabledKeys = ref(0)
+// --- Refs ---
+const loading = ref(true)
+const projects = ref<any[]>([])
 
-// --- Mock Data (Table - 待替換) ---
-// 假設的即將到期列表數據 (只顯示前 5 筆最快到期的)
-const upcomingExpirations = ref([
-  { keyId: 'key-abc-123', keyInfo: 'key-abc-123 (主資料庫)', expiryDate: '2025/10/25' },
-  { keyId: 'key-def-456', keyInfo: 'key-def-456 (API Gateway)', expiryDate: '2025/10/28' },
-  { keyId: 'key-ghi-789', keyInfo: 'key-ghi-789 (舊系統)', expiryDate: '2025/11/02' },
-  { keyId: 'key-jkl-012', keyInfo: 'key-jkl-012 (測試環境)', expiryDate: '2025/11/05' },
-  { keyId: 'key-mno-345', keyInfo: 'key-mno-345 (報表服務)', expiryDate: '2025/11/10' },
-])
-
-// --- Chart Instances (已移除) ---
-// let keysStatusChartInstance: Chart | null = null
-// let keysExpiryChartInstance: Chart | null = null
-
-// --- Functions ---
-const fetchKeyStats = async () => {
+// --- API Functions ---
+const fetchProjects = async () => {
     loading.value = true
     try {
         const savedToken = localStorage.getItem('auth_token')
@@ -112,63 +104,49 @@ const fetchKeyStats = async () => {
             return
         }
 
-        const res = await axios.get('http://localhost:8000/keys/get_all', {
+        // 獲取所有專案列表
+        // 注意：這裡使用 timestamp 防止 API 快取
+        const res = await axios.get(`http://localhost:8000/projects/get_all?t=${new Date().getTime()}`, {
             headers: { Authorization: `Bearer ${savedToken}` }
         })
 
-        if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
-            allKeys.value = res.data.data
-            totalKeys.value = allKeys.value.length
-            activeKeys.value = allKeys.value.filter(
-                k => k.key_state?.toLowerCase() === 'active' 
-            ).length
-            disabledKeys.value = totalKeys.value - activeKeys.value 
-            expiringKeys.value = 0 // 保持為 0
-
-            // *** 移除 drawCharts() 呼叫 ***
-            // await nextTick() 
-            // drawCharts() 
-
+        if (res.data && (res.data.code === 0 || res.data.code === 200) && Array.isArray(res.data.data)) {
+            projects.value = res.data.data
         } else {
-            console.error('金鑰資料格式不正確:', res.data)
-            ElMessage.warning('金鑰資料格式不正確')
+            console.error('專案資料格式不正確:', res.data)
+            // 若 API 失敗但不影響頁面呈現，可視情況不跳出錯誤提示，或設為空陣列
+            projects.value = [] 
         }
     } catch (err) {
-        console.error("無法獲取金鑰數據:", err)
-        ElMessage.error('無法獲取金鑰數據')
+        console.error("API 錯誤:", err)
+        ElMessage.error('獲取專案資料失敗')
     } finally {
         loading.value = false
     }
 }
 
-// *** drawCharts 函數已移除 ***
-
-// 跳轉到金鑰詳細頁面 (示例)
-const viewKeyDetail = (keyId: string) => {
-    router.push({ path: '/tools/tool2', query: { id: keyId } });
-}
-
-// 跳轉到金鑰列表頁面並帶上篩選條件 (示例)
-const navigateToKeyList = (filter: string) => {
-     if (filter === 'expiring') {
-        router.push({ path: '/tools/tool1', query: { status: 'expiring' } }); 
-     }
+// --- Navigation ---
+const navigateToDetail = (project: any, type: 'key' | 'user') => {
+    // 跳轉到 detail 頁面
+    // 透過 query params 傳遞資料，讓 detail.vue 知道要顯示哪個專案的什麼資訊
+    router.push({
+        path: '/dashboard/detail',
+        query: {
+            codename: project.codename,
+            projectname: project.projectname,
+            type: type
+        }
+    })
 }
 
 // --- Lifecycle Hooks ---
 onMounted(() => {
-  fetchKeyStats() 
+  fetchProjects() 
 })
-
-// *** onBeforeUnmount 已移除 ***
 
 </script>
 
 <style scoped>
-.dashboard-page {
-  /* padding: 20px; */ /* 由 layout 提供 */
-}
-
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -182,10 +160,23 @@ onMounted(() => {
 .stat-card {
   text-align: center;
   padding: 20px; 
-  height: 150px; 
+  height: 120px; 
   display: flex;
   flex-direction: column;
   justify-content: center; 
+}
+
+.info-card {
+  background-color: #f4f4f5;
+  color: #909399;
+}
+
+.info-text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
 }
 
 .stat-value {
@@ -193,22 +184,18 @@ onMounted(() => {
   margin-top: 5px; 
   font-weight: bold;
   line-height: 1.2; 
+  color: #409eff;
 }
 
 h3 {
-  margin: 0 0 5px; 
+  margin: 0 0 10px; 
   color: #606266;
   font-size: 1em; 
 }
 
-/* *** .chart-row 和 .chart-row canvas 樣式已移除 *** */
-
-.action-row { 
-  margin-bottom: 20px;
+.action-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
 }
-
-.el-table {
-    font-size: 0.9em;
-}
-
 </style>

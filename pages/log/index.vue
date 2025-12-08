@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import axios from 'axios'
-import { ElMessage, ElDialog } from 'element-plus' // 引入 ElDialog (可選，模板直接用也可)
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
@@ -12,170 +12,199 @@ definePageMeta({
 const router = useRouter()
 const auth = useAuthStore()
 
+// --- State ---
 const logs = ref<any[]>([])
 const loading = ref(true)
 const searchQuery = ref('')
-const selectedUsername = ref<string | null>(null) // 修改：預設為 null
-const isCurrentUserAdmin = ref(false)
+const selectedUsername = ref<string | null>(null) // 下拉選單選擇的成員
 
-// --- Dialog 相關 Refs ---
-const dialogVisible = ref(false)
-const selectedLogDetail = ref('')
+// 專案相關狀態
+const currentProjectMembers = ref<any[]>([]) // 當前專案的成員列表
+const currentUserProjectRole = ref<string | null>(null) // 當前使用者在該專案的角色 (admin/viewer)
 
 // --- Computed Properties ---
 
-const isAdmin = computed(() => isCurrentUserAdmin.value)
-const currentUsername = computed(() => auth.user?.username)
+const isSuperuser = computed(() => auth.isSuperuser)
+const currentUsername = computed(() => auth.user?.username || '')
+const currentCodename = computed(() => auth.currentSelectedCodename)
 
-// *** 修改：移除 'all' 選項 ***
-const allUsernames = computed(() => {
-  if (!isAdmin.value) { return [] }
-  const usernames = [...new Set(logs.value.map(log => log.username))]
-  return usernames.sort()
+// 計算當前在該專案是否為 Admin (Superuser 視為擁有所有 Admin 權限)
+const isProjectAdmin = computed(() => {
+  return isSuperuser.value || currentUserProjectRole.value === 'admin'
 })
 
-// *** 修改：過濾邏輯 ***
-const filteredLogs = computed(() => {
-  let filtered = logs.value
+// 計算下拉選單要顯示的成員列表
+const memberOptions = computed(() => {
+  // 如果是 Superuser 且選了 "全部專案"，顯示 Log 中出現過的所有人
+  if (isSuperuser.value && currentCodename.value === 'all') {
+    const uniqueUsers = [...new Set(logs.value.map(log => log.username))]
+    return uniqueUsers.sort()
+  }
   
-  // 1. Role-based pre-filtering
-  if (!isAdmin.value && currentUsername.value) {
-    filtered = filtered.filter(log => log.username === currentUsername.value)
+  // 如果是 Project Admin (或 Superuser 在特定專案)，顯示該專案的成員
+  if (isProjectAdmin.value) {
+    return currentProjectMembers.value.map(m => m.username).sort()
   }
 
-  // 2. Admin Username Dropdown Filter
-  // *** 修改：移除 'all' 檢查 ***
-  if (isAdmin.value && selectedUsername.value) { // 檢查 selectedUsername 是否有值
-    filtered = filtered.filter(log => log.username === selectedUsername.value)
-  }
+  // Viewer 只能看自己，不需要下拉選單 (或者只有自己)
+  return [currentUsername.value]
+})
 
-  // 3. Search Query Filter
-  const query = searchQuery.value.toLowerCase().trim()
-  if (query) {
-    filtered = filtered.filter(log => {
-      
-      // --- *** 這裡是修改後的搜尋邏輯 (START) *** ---
-      
-      // 1. 檢查使用者可見的「格式化後」的欄位
-      const timeFormatted = formatDate(log.execution_time).toLowerCase()
-      const resultText = (log.execution_result ? '成功' : '失敗').toLowerCase()
+// *** 核心過濾邏輯 ***
+const filteredLogs = computed(() => {
+  let result = logs.value
 
-      if (timeFormatted.includes(query) || resultText.includes(query)) {
-        return true;
-      }
-
-      // 2. 檢查 log 物件中的「所有」原始值 (轉換為字串)
-      //    這會涵蓋 username, action, detail, 以及任何其他欄位
-      return Object.values(log).some(value => {
-        if (value === null || value === undefined) {
-          return false;
-        }
-        // 將所有值（數字、布林值、字串）轉為字串並搜尋
-        return String(value).toLowerCase().includes(query);
-      });
-      
-      // --- *** 這裡是修改後的搜尋邏輯 (END) *** ---
-
+  // 1. 專案篩選 (Project Filter)
+  if (currentCodename.value && currentCodename.value !== 'all') {
+    // 篩選 Log 的 codename 欄位 (假設 Log 有紀錄 codename)
+    // 如果 Log 沒有 codename 欄位，則改用「是否為專案成員」來判斷
+    result = result.filter(log => {
+      // 優先比對 log.codename
+      if (log.codename) return log.codename === currentCodename.value
+      // 若無，則檢查該 log 的 username 是否在專案成員名單中 (Fallback)
+      return currentProjectMembers.value.some(m => m.username === log.username)
     })
   }
-  return filtered
+
+  // 2. 角色權限篩選 (Role Permission)
+  if (isSuperuser.value) {
+    // Superuser: 可以看所有 (已通過專案篩選的) 資料
+  } else if (currentUserProjectRole.value === 'admin') {
+    // Project Admin: 可以看所有 (已通過專案篩選的) 資料
+  } else {
+    // Project Viewer (或其他): 強制只能看自己的
+    result = result.filter(log => log.username === currentUsername.value)
+  }
+
+  // 3. 成員下拉篩選 (Dropdown Filter - 僅 Admin/Superuser 有效)
+  if (isProjectAdmin.value && selectedUsername.value) {
+    result = result.filter(log => log.username === selectedUsername.value)
+  }
+
+  // 【新增修正】若已選擇特定專案，補全 Log 的 codename 欄位以供顯示
+  if (currentCodename.value && currentCodename.value !== 'all') {
+    result = result.map(log => ({
+      ...log,
+      codename: log.codename || currentCodename.value
+    }))
+  }
+
+  // 4. 關鍵字搜尋 (Search Query)
+  const query = searchQuery.value.toLowerCase().trim()
+  if (query) {
+    result = result.filter(log => {
+      const timeFormatted = formatDate(log.execution_time).toLowerCase()
+      const resultText = (log.execution_result ? '成功' : '失敗').toLowerCase()
+      
+      if (timeFormatted.includes(query) || resultText.includes(query)) return true
+
+      return Object.values(log).some(value => {
+        if (value === null || value === undefined) return false
+        return String(value).toLowerCase().includes(query)
+      })
+    })
+  }
+
+  return result
 })
 
-// --- Data Fetching ---
+// --- API Functions ---
 
-const fetchCurrentUserRole = async (): Promise<boolean> => {
-    const username = currentUsername.value;
-    if (!username) {
-        ElMessage.error('無法獲取當前用戶名稱，請重新登入');
-        router.push('/login');
-        return false;
-    }
-    try {
-        const savedToken = localStorage.getItem('auth_token');
-        if (!savedToken) {
-            ElMessage.error('尚未登入，請先登入');
-            router.push('/login');
-            return false;
-        }
-        console.log(`Fetching role for user: ${username}`);
-        const res = await axios.post('http://localhost:8000/users/get_one',
-            { username: username },
-            { headers: { Authorization: `Bearer ${savedToken}` } }
-        );
-        if (res.data && res.data.code === 200 && res.data.data) {
-            const userRole = res.data.data.role;
-            console.log(`User role fetched: ${userRole}`);
-            isCurrentUserAdmin.value = userRole === 'admin';
-            return true;
-        } else {
-            console.error('獲取用戶角色回傳格式不正確:', res.data);
-            ElMessage.warning('無法獲取用戶角色資訊');
-            isCurrentUserAdmin.value = false;
-            return false;
-        }
-    } catch (err: any) {
-        console.error("獲取用戶角色時出錯:", err);
-        ElMessage.error(err.response?.data?.message || '無法獲取用戶角色資訊');
-        isCurrentUserAdmin.value = false;
-        return false;
-    }
-}
-
+// 1. 獲取所有 Logs
 const fetchLogs = async () => {
+  loading.value = true
   logs.value = []
   try {
-    const savedToken = localStorage.getItem('auth_token')
-    if (!savedToken) {
-      ElMessage.error('尚未登入，請先登入')
+    const token = localStorage.getItem('auth_token')
+    if (!token) {
+      ElMessage.error('尚未登入')
       router.push('/login')
       return
     }
-    console.log('Fetching logs...');
+    
     const res = await axios.get('http://localhost:8000/logs/get_all', {
-      headers: { Authorization: `Bearer ${savedToken}` }
+      headers: { Authorization: `Bearer ${token}` }
     })
+
     if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
       logs.value = res.data.data
-      console.log(`Fetched ${logs.value.length} logs.`);
-      
-      // *** 修改：設置預設下拉選單值 ***
-      if (isAdmin.value) {
-          // 如果是 Admin，預設為當前登入的 Admin 帳號
-          selectedUsername.value = currentUsername.value || null; 
-      }
-      
     } else {
-      console.error('Log API response format error:', res.data)
-      ElMessage.warning(res.data.message || '無法獲取日誌資料或格式錯誤')
+      console.warn('Logs API format issue:', res.data)
     }
   } catch (err: any) {
-    console.error('Error fetching logs:', err)
-    ElMessage.error(err.response?.data?.message || '獲取日誌資料時發生錯誤')
+    console.error('Fetch logs error:', err)
+    ElMessage.error('無法獲取日誌資料')
+  } finally {
+    loading.value = false
   }
 }
+
+// 2. 獲取當前選擇專案的詳細資訊 (為了判斷 Role 和取得成員名單)
+const fetchProjectDetails = async (codename: string) => {
+  if (!codename || codename === 'all') {
+    currentProjectMembers.value = []
+    currentUserProjectRole.value = null
+    return
+  }
+
+  try {
+    const token = localStorage.getItem('auth_token')
+    // 使用 get_one 或 get_by_username 視後端支援，這裡假設用 projects/get_one 獲取專案詳情
+    // 注意：後端 API 必須支援透過 codename 查詢
+    // 假設 Payload 為 { codename: "..." }
+    const res = await axios.post(
+      'http://localhost:8000/projects/get_one', 
+      { codename: codename },
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+
+    if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
+      const projectData = res.data.data
+      
+      // 1. 設定成員名單
+      currentProjectMembers.value = projectData.projectinfo || []
+
+      // 2. 判斷當前 User 在此專案的角色
+      const myInfo = currentProjectMembers.value.find((m: any) => m.username === currentUsername.value)
+      currentUserProjectRole.value = myInfo ? myInfo.projectrole : 'viewer' // 若找不到預設 viewer 或 null
+
+    } else {
+      console.warn('Project details fetch failed for role check')
+    }
+  } catch (error) {
+    console.error('Fetch project details error:', error)
+  }
+}
+
+// --- Watchers ---
+
+// 監聽專案切換，重新判斷權限
+watch(currentCodename, async (newCode) => {
+  selectedUsername.value = null // 切換專案時重置成員篩選
+  if (newCode) {
+    await fetchProjectDetails(newCode)
+  }
+}, { immediate: true })
 
 // --- Helper Functions ---
 
 const formatDate = (dateString: string | null | undefined): string => {
  try {
-        return dateString ? new Date(dateString).toLocaleString() : 'N/A';
-     } catch (e) {
-        console.warn(`Invalid date format for: ${dateString}`);
-        return 'Invalid Date';
-     }
+    return dateString ? new Date(dateString).toLocaleString() : 'N/A';
+ } catch (e) {
+    return 'Invalid Date';
+ }
 };
 
 // 處理查看詳細按鈕點擊
 const handleViewDetail = (logEntry: any) => {
-    // *** 修改：跳轉到新頁面 ***
     try {
         const logDataString = JSON.stringify(logEntry);
         router.push({ 
-            path: '/log/detail', // *** 跳轉到新的詳細頁面 ***
-            query: { data: logDataString } // *** 傳遞序列化的數據 ***
+            path: '/log/detail', 
+            query: { data: logDataString } 
         });
     } catch (e) {
-        console.error("無法序列化日誌數據:", e);
         ElMessage.error("無法顯示詳細資訊");
     }
 }
@@ -183,17 +212,11 @@ const handleViewDetail = (logEntry: any) => {
 // --- Lifecycle ---
 
 onMounted(async () => {
-  loading.value = true;
-  console.log('Log page mounted. Fetching current user role...');
-  const roleFetchedSuccess = await fetchCurrentUserRole();
-  if (roleFetchedSuccess) {
-      console.log('Role fetch successful. Fetching logs...');
-      await fetchLogs();
-      console.log('Log fetching complete.');
-  } else {
-      console.log('Role fetch failed. Skipping log fetch.');
+  await fetchLogs()
+  // 確保初始化時也跑一次專案權限判斷
+  if (currentCodename.value && currentCodename.value !== 'all') {
+    await fetchProjectDetails(currentCodename.value)
   }
-  loading.value = false;
 })
 
 </script>
@@ -203,19 +226,32 @@ onMounted(async () => {
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>帳號操作日誌</span>
+          <div class="header-left">
+            <span>帳號操作日誌</span>
+            <!-- 顯示當前權限狀態 (除錯或提示用) -->
+            <el-tag 
+              v-if="currentCodename !== 'all'" 
+              size="small" 
+              :type="isProjectAdmin ? 'danger' : 'info'" 
+              class="ml-2"
+            >
+              {{ isSuperuser ? 'Superuser' : (currentUserProjectRole ? currentUserProjectRole.toUpperCase() : 'VIEWER') }}
+            </el-tag>
+          </div>
+          
           <div class="filter-controls">
+            <!-- 成員篩選 (僅 Admin/Superuser 可見) -->
             <el-select
-              v-if="isAdmin"
+              v-if="isProjectAdmin"
               v-model="selectedUsername"
-              placeholder="選擇使用者"
+              placeholder="篩選成員"
               size="small"
               style="width: 200px; margin-right: 10px;"
               clearable
               filterable
             >
               <el-option
-                v-for="username in allUsernames"
+                v-for="username in memberOptions"
                 :key="username"
                 :label="username"
                 :value="username"
@@ -235,9 +271,10 @@ onMounted(async () => {
 
       <div class="table-container">
         <el-table :data="filteredLogs" v-loading="loading" style="width: 100%" border stripe>
-          {/* *** 修改：移除所有 width 屬性 *** */}
-          <el-table-column prop="username" label="使用者帳號" sortable />
-          <el-table-column prop="action" label="操作行為" sortable />
+          <!-- 【確保有專案代號欄位】 -->
+          <el-table-column prop="codename" label="專案代號" width="120" sortable />
+          <el-table-column prop="username" label="使用者帳號" width="150" sortable />
+          <el-table-column prop="action" label="操作行為" width="200" sortable />
           <el-table-column prop="execution_time" label="執行時間" sortable>
             <template #default="scope">
               {{ formatDate(scope.row.execution_time) }}
@@ -266,20 +303,13 @@ onMounted(async () => {
         </el-table>
       </div>
     </el-card>
-
-
   </div>
 </template>
 
 <style scoped>
-/* 頁面 padding 已加到 template */
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.header-left { display: flex; align-items: center; }
 .filter-controls { display: flex; align-items: center; }
 .table-container { width: 100%; }
-
-/* *** 修改：移除 sticky header 樣式 *** */
-/* .el-table :deep(.el-table__header-wrapper) { ... } */
-
-/* 移除 Dialog 相關樣式 */
-/* pre { ... } */
+.ml-2 { margin-left: 8px; }
 </style>
