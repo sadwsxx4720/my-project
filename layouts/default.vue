@@ -266,7 +266,7 @@ const handleMenuSelect = (index: string) => {
     
     // 系統管理與通知
     case 'project-manage': router.push('/project'); break 
-    case 'notifications': router.push('/notifications'); break 
+    case 'notifications': router.push('/settings'); break 
     
     default: break
   }
