@@ -3,7 +3,6 @@
     <el-card class="settings-card" shadow="never">
       <el-tabs type="border-card" class="full-height-tabs">
         
-        <!-- 分頁 1: 通知設定 -->
         <el-tab-pane class="tab-pane-content">
           <template #label>
             <el-icon><Bell /></el-icon>
@@ -11,72 +10,151 @@
           </template>
           
           <div class="notification-settings-container">
-            <!-- 1. 通知信箱設定按鈕 (僅 Superuser 可見，靠右) -->
-            <div class="top-section" v-if="auth.isSuperuser">
-               <el-button type="primary" size="large" @click="goToEmailPage">
+            <div class="top-section" v-if="canEdit">
+               <el-button 
+                 type="primary" 
+                 plain 
+                 size="large" 
+                 @click="openEmailModal"
+                 :disabled="!currentCodename || currentCodename === 'all'"
+               >
                  設定通知信箱
                </el-button>
             </div>
 
             <el-divider content-position="center">專案成員通知名單設定</el-divider>
             
-            <!-- 2. 專案成員勾選區塊 -->
             <div v-loading="loadingMembers" class="member-selection-area">
-              <!-- 情況 A: 未選擇專案 -->
               <div v-if="!currentCodename || currentCodename === 'all'" class="empty-block">
                  <el-empty description="請先在上方選擇一個特定專案以設定成員通知" :image-size="100" />
               </div>
 
-              <!-- 情況 B: Viewer 權限 (不可勾選) -->
-              <div v-else-if="currentProjectRole === 'viewer' && !auth.isSuperuser" class="empty-block">
-                 <el-alert title="您在此專案為 Viewer 權限，無法管理通知名單" type="warning" center :closable="false" show-icon />
-              </div>
-
-              <!-- 情況 C: Superuser 或 Admin (可勾選) -->
               <div v-else class="member-list-wrapper">
                  
-                 <!-- 列表控制列 -->
                  <div class="list-controls">
-                   <span class="role-hint">
-                     當前權限: <el-tag size="small" effect="dark">{{ auth.isSuperuser ? 'Superuser' : 'Admin' }}</el-tag>
-                   </span>
-                   <!-- 下拉式選單 (僅 Superuser 可見) -->
-                   <div class="filter-box" v-if="auth.isSuperuser">
-                     <span class="label">篩選角色：</span>
-                     <el-select v-model="roleFilter" placeholder="全部" size="default" style="width: 150px;">
-                       <el-option label="全部 (All)" value="all" />
-                       <el-option label="Admin" value="admin" />
-                       <el-option label="Viewer" value="viewer" />
-                     </el-select>
+                   <div class="controls-left">
+                     <span class="role-hint">
+                       當前權限: <el-tag size="small" :type="canEdit ? 'danger' : 'info'" effect="dark">
+                         {{ auth.isSuperuser ? 'Superuser' : (currentProjectRole ? currentProjectRole.toUpperCase() : 'UNKNOWN') }}
+                       </el-tag>
+                     </span>
+                     <span v-if="!canEdit" class="viewer-hint">
+                     </span>
+                   </div>
+
+                   <div class="controls-right">
+                     <el-input
+                        v-model="searchQuery"
+                        placeholder="搜尋名稱、Email 或角色..."
+                        prefix-icon="Search"
+                        size="default"
+                        style="width: 220px;" 
+                        clearable
+                      />
+
+                      <div class="filter-box">
+                        <span class="label">角色：</span>
+                        <el-select 
+                          v-model="roleFilter" 
+                          placeholder="全部角色" 
+                          size="default" 
+                          style="width: 140px;"
+                          clearable
+                        >
+                          <el-option label="全部" value="all" />
+                          <el-option label="Admin" value="admin" />
+                          <el-option label="Viewer" value="viewer" />
+                          <el-option label="Email" value="email" />
+                        </el-select>
+                      </div>
+
+                      <div class="filter-box">
+                        <span class="label">使用者：</span>
+                        <el-select 
+                          v-model="userFilter" 
+                          placeholder="全部使用者" 
+                          size="default" 
+                          style="width: 160px;"
+                          filterable
+                          clearable
+                          popper-class="user-select-dropdown"
+                        >
+                          <el-option label="全部" value="all" />
+                          <el-option 
+                            v-for="user in filterUserOptions" 
+                            :key="user.value" 
+                            :label="user.label" 
+                            :value="user.value" 
+                          />
+                        </el-select>
+                      </div>
                    </div>
                  </div>
                  
-                 <!-- 條列式呈現 (Table) -->
                  <el-table 
                     ref="memberTableRef"
                     :data="displayedMembers" 
                     style="width: 100%" 
-                    border
-                    stripe
+                    border 
+                    stripe 
                     size="large"
                     @selection-change="handleSelectionChange"
-                    row-key="username"
+                    row-key="email"
+                    :class="['member-table', { 'disable-header-checkbox': !canEdit }]"
                   >
-                    <el-table-column type="selection" width="55" align="center" />
-                    <el-table-column label="使用者名稱" prop="username" min-width="150" />
-                    <el-table-column label="Email" prop="email" min-width="250" />
-                    <el-table-column label="角色" prop="projectrole" width="120" align="center">
+                    <el-table-column 
+                      type="selection" 
+                      width="95" 
+                      align="center" 
+                      header-align="center"
+                      :selectable="checkSelectable" 
+                    />
+                    
+                    <el-table-column 
+                      label="使用者名稱" 
+                      prop="username" 
+                      min-width="150" 
+                      sortable 
+                      align="left"
+                      header-align="left"
+                    >
                       <template #default="scope">
-                        <el-tag :type="scope.row.projectrole === 'admin' ? 'danger' : 'info'" effect="plain">
-                          {{ scope.row.projectrole.toUpperCase() }}
-                        </el-tag>
+                        <span class="text-content">{{ scope.row.username || '-' }}</span>
+                      </template>
+                    </el-table-column>
+                    
+                    <el-table-column 
+                      label="Email" 
+                      prop="email" 
+                      min-width="250" 
+                      sortable 
+                      align="left"
+                      header-align="left"
+                    >
+                      <template #default="scope">
+                        <span class="text-content">{{ scope.row.email }}</span>
+                      </template>
+                    </el-table-column>
+                    
+                    <el-table-column 
+                      label="角色" 
+                      prop="projectrole" 
+                      width="150" 
+                      align="center" 
+                      header-align="center" 
+                      sortable
+                    >
+                      <template #default="scope">
+                        <el-tag v-if="scope.row.projectrole === 'admin'" type="danger" effect="plain">ADMIN</el-tag>
+                        <el-tag v-else-if="scope.row.projectrole === 'viewer'" type="info" effect="plain">VIEWER</el-tag>
+                        <el-tag v-else-if="scope.row.projectrole === 'email'" type="warning" effect="plain">EMAIL</el-tag>
+                        <el-tag v-else effect="plain">{{ scope.row.projectrole }}</el-tag>
                       </template>
                     </el-table-column>
                  </el-table>
 
-                 <!-- 儲存按鈕 (置中) -->
-                 <div class="action-footer">
-                   <el-button type="success" size="large" class="save-btn" @click="saveNotificationMembers">
+                 <div class="action-footer" v-if="canEdit">
+                   <el-button type="primary" size="large" class="save-btn" @click="saveNotificationMembers">
                      確定更新名單
                    </el-button>
                  </div>
@@ -85,61 +163,176 @@
           </div>
         </el-tab-pane>
 
-        <!-- 分頁 2: 輪替天數設定 -->
-        <el-tab-pane class="tab-pane-content rotation-tab">
+        <el-tab-pane class="tab-pane-content" v-if="auth.isSuperuser">
+          <template #label>
+            <el-icon><Message /></el-icon>
+            <span>信件設定</span>
+          </template>
+          
+          <div class="mail-settings-container">
+            <div v-if="!currentCodename || currentCodename === 'all'" class="empty-block">
+               <el-empty description="請先在上方選擇一個特定專案以設定信件內容" :image-size="100" />
+            </div>
+
+            <div v-else class="mail-form-wrapper" v-loading="loadingMailSettings">
+               <el-form :model="mailForm" label-position="top" class="mail-form">
+                 <el-form-item label="寄件人信箱 (Mail Sender)">
+                   <el-input v-model="mailForm.sender" placeholder="請輸入寄件人信箱" size="large" />
+                 </el-form-item>
+
+                 <el-form-item label="SMTP 密碼">
+                   <el-input 
+                     v-model="mailForm.smtp_pwd" 
+                     placeholder="請輸入 SMTP 密碼" 
+                     type="password"
+                     show-password
+                     size="large" 
+                   />
+                 </el-form-item>
+
+                 <el-form-item label="信件主旨">
+                   <el-input v-model="mailForm.subject" placeholder="請輸入信件主旨" size="large" />
+                 </el-form-item>
+
+                 <el-form-item label="信件內容">
+                   <el-input 
+                     v-model="mailForm.content" 
+                     type="textarea" 
+                     :rows="8" 
+                     placeholder="請輸入信件內容模板..." 
+                   />
+                 </el-form-item>
+
+                 <div class="form-btn-item">
+                   <el-button type="primary" size="large" class="save-btn" @click="saveMailSettings">
+                     儲存設定
+                   </el-button>
+                 </div>
+               </el-form>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane class="tab-pane-content rotation-tab" v-if="auth.isSuperuser">
           <template #label>
             <el-icon><Timer /></el-icon>
             <span>輪替天數設定</span>
           </template>
           
-          <!-- 內容水平垂直置中容器 -->
-          <div class="rotation-center-wrapper">
-             <div class="info-alert">
-                <el-alert 
-                  title="設定金鑰有效期限，系統將在到期前發出提醒" 
-                  type="info" 
-                  center
-                  :closable="false" 
-                  show-icon 
-                />
-             </div>
+          <div class="rotation-settings-container">
+            
+            <div v-if="!currentCodename || currentCodename === 'all'" class="empty-block">
+               <el-empty description="請先在上方選擇一個特定專案以設定輪替天數" :image-size="100" />
+            </div>
 
-             <el-form :model="rotationForm" label-position="top" class="rotation-form">
-               <el-form-item label="金鑰輪替天數">
-                 <div class="input-with-unit">
-                   <el-input-number 
-                     v-model="rotationForm.days" 
-                     :min="1" 
-                     :max="3650"
-                     size="large"
-                     controls-position="right"
-                     style="width: 300px;"
-                   />
-                   <span class="unit">天</span>
-                 </div>
-               </el-form-item>
+            <div v-else class="rotation-center-wrapper">
+               <div class="info-alert">
+                  <el-alert 
+                    title="設定金鑰有效期限，系統將在到期前發出提醒" 
+                    type="info" 
+                    center
+                    :closable="false" 
+                    show-icon 
+                  />
+               </div>
 
-               <el-form-item class="form-btn-item">
-                 <el-button type="primary" size="large" class="save-btn" @click="saveRotationSettings">
-                   確認送出
-                 </el-button>
-               </el-form-item>
-             </el-form>
+               <div style="text-align: center; margin-bottom: 20px; color: #606266;">
+                 當前設定專案：<el-tag>{{ currentCodename }}</el-tag>
+               </div>
+
+               <el-form :model="rotationForm" label-position="top" class="rotation-form">
+                 <el-form-item label="金鑰輪替天數">
+                   <div class="input-with-unit">
+                     <el-input-number 
+                       v-model="rotationForm.days" 
+                       :min="1" 
+                       :max="3650"
+                       :precision="0"
+                       :step="1"
+                       size="large"
+                       controls-position="right"
+                       style="width: 300px;"
+                       @keydown="preventNonNumericInput"
+                     />
+                     <span class="unit">天</span>
+                   </div>
+                 </el-form-item>
+
+                 <el-form-item class="form-btn-item">
+                   <el-button type="primary" size="large" class="save-btn" @click="saveRotationSettings">
+                     確認送出
+                   </el-button>
+                 </el-form-item>
+               </el-form>
+            </div>
           </div>
         </el-tab-pane>
 
       </el-tabs>
     </el-card>
+
+    <el-dialog
+      v-model="emailDialogVisible"
+      title="設定通知電子郵件"
+      width="700px"
+      append-to-body
+      destroy-on-close
+      class="email-dialog"
+    >
+      <div class="email-dialog-content">
+        <el-form 
+          ref="emailFormRef"
+          :model="emailForm"
+          :rules="emailRules"
+          label-position="top"
+          @submit.prevent
+          class="email-form-in-modal"
+        >
+          <el-form-item label="請輸入 Email" prop="email">
+            <el-input 
+              v-model="emailForm.email" 
+              placeholder="example@domain.com" 
+              :prefix-icon="Message"
+              clearable
+              size="large"
+            />
+          </el-form-item>
+
+          <el-form-item label="請再次輸入 Email" prop="confirmEmail">
+            <el-input 
+              v-model="emailForm.confirmEmail" 
+              placeholder="請再次確認 Email" 
+              :prefix-icon="Message"
+              clearable
+              size="large"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="emailDialogVisible = false" size="large">取消</el-button>
+        <el-button 
+          type="primary" 
+          :loading="addingEmail" 
+          :disabled="!isEmailFormValid"
+          @click="handleEmailSubmit"
+          size="large"
+        >
+          確認送出
+        </el-button>
+      </template>
+    </el-dialog>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
-import { Bell, Message, Check, Timer } from '@element-plus/icons-vue'
+import { ElMessage, ElTable, type FormInstance, type FormRules } from 'element-plus'
+import { Bell, Message, Check, Timer, Search } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'default'
@@ -147,61 +340,177 @@ definePageMeta({
 
 const router = useRouter()
 const auth = useAuthStore()
+const memberTableRef = ref<InstanceType<typeof ElTable>>()
 
 // --- State ---
 const rotationForm = ref({ days: 365 }) 
 
+const loadingMailSettings = ref(false)
+const mailForm = ref({
+  sender: '',
+  smtp_pwd: '',
+  subject: '',
+  content: ''
+})
+
 // --- Project Members State ---
 const loadingMembers = ref(false)
 const projectInfo = ref<any[]>([]) 
-const allUsers = ref<any[]>([]) // 儲存所有使用者以對應 Email
+const allUsers = ref<any[]>([]) 
 const currentProjectRole = ref<string>('') 
-const selectedMembers = ref<any[]>([]) // 儲存 table 勾選的 rows
-const roleFilter = ref('all') // 下拉選單篩選狀態
+const selectedMembers = ref<any[]>([]) 
+const userFilter = ref('all') 
+const roleFilter = ref('all')  // 新增：角色篩選狀態
+const searchQuery = ref('')    
+
+const mailReceivers = ref<string[]>([])
+const combinedList = ref<any[]>([])
+
+// --- Email Modal State ---
+const emailDialogVisible = ref(false)
+const emailFormRef = ref<FormInstance>()
+const addingEmail = ref(false)
+const emailForm = reactive({
+  email: '',
+  confirmEmail: ''
+})
 
 // --- Computed ---
 const currentCodename = computed(() => auth.currentSelectedCodename)
 const currentUsername = computed(() => auth.user?.username)
 
-// 1. 合併專案成員與 Email 資訊
-const enrichedMembers = computed(() => {
-  return projectInfo.value.map(member => {
-    const userDetail = allUsers.value.find(u => u.username === member.username)
-    return {
-      ...member,
-      email: userDetail ? userDetail.email : '載入中...'
-    }
-  })
+// 判斷是否擁有編輯權限 (Superuser 或 Project Admin)
+const canEdit = computed(() => {
+  return auth.isSuperuser || currentProjectRole.value === 'admin'
 })
 
-// 2. 根據權限與篩選器過濾顯示列表
-const displayedMembers = computed(() => {
-  let members = []
+// 篩選使用者下拉選單，只保留 username
+const filterUserOptions = computed(() => {
+  return combinedList.value.map(m => ({
+    label: m.username || m.email,
+    value: m.email 
+  }))
+})
 
-  // 權限過濾
-  if (auth.isSuperuser) {
-    members = enrichedMembers.value
-  } else if (currentProjectRole.value === 'admin') {
-    members = enrichedMembers.value.filter(m => m.projectrole === 'viewer')
-  } else {
-    return []
+// 修改：篩選後顯示的列表 (包含 Search, UserFilter, RoleFilter)
+const displayedMembers = computed(() => {
+  let members = combinedList.value
+
+  // 1. 搜尋過濾 (同時搜尋 名稱、Email、角色)
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    members = members.filter(m => 
+      (m.username && m.username.toLowerCase().includes(q)) || 
+      (m.email && m.email.toLowerCase().includes(q)) ||
+      (m.projectrole && m.projectrole.toLowerCase().includes(q))
+    )
   }
 
-  // 下拉選單篩選 (僅當 Superuser 看得見選單時有效，Admin 因為選單隱藏且上面已過濾，預設 all 沒影響)
-  if (roleFilter.value !== 'all') {
+  // 2. 使用者下拉選單過濾
+  if (userFilter.value && userFilter.value !== 'all') {
+    members = members.filter(m => m.email === userFilter.value)
+  }
+
+  // 3. 新增：角色下拉選單過濾
+  if (roleFilter.value && roleFilter.value !== 'all') {
     members = members.filter(m => m.projectrole === roleFilter.value)
   }
 
   return members
 })
 
-// --- Methods ---
+// Email 表單驗證
+const isEmailFormValid = computed(() => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return (
+    emailForm.email.trim() !== '' && 
+    emailForm.confirmEmail.trim() !== '' && 
+    emailRegex.test(emailForm.email) && 
+    emailForm.email === emailForm.confirmEmail 
+  )
+})
 
-const goToEmailPage = () => {
-  router.push('/settings/email')
+const validateConfirmEmail = (rule: any, value: string, callback: any) => {
+  if (value === '') {
+    callback(new Error('請再次輸入 Email'))
+  } else if (value !== emailForm.email) {
+    callback(new Error('兩次輸入的 Email 不一致'))
+  } else {
+    callback()
+  }
 }
 
-// 獲取所有使用者 (為了拿 Email)
+const emailRules = reactive<FormRules>({
+  email: [
+    { required: true, message: '請輸入 Email', trigger: 'blur' },
+    { type: 'email', message: '請輸入正確的 Email 格式', trigger: ['blur', 'change'] }
+  ],
+  confirmEmail: [
+    { validator: validateConfirmEmail, trigger: ['blur', 'change'] }
+  ]
+})
+
+
+// --- Methods ---
+
+const openEmailModal = () => {
+  emailForm.email = ''
+  emailForm.confirmEmail = ''
+  emailDialogVisible.value = true
+}
+
+const handleEmailSubmit = async () => {
+  if (!emailFormRef.value) return
+  
+  await emailFormRef.value.validate(async (valid) => {
+    if (valid) {
+      addingEmail.value = true
+      try {
+        const token = localStorage.getItem('auth_token')
+        
+        const currentSelectedEmails = selectedMembers.value.map(m => m.email).filter(e => e)
+
+        if (currentSelectedEmails.includes(emailForm.email)) {
+             ElMessage.warning('此 Email 已在名單中')
+             addingEmail.value = false
+             return
+        }
+        
+        const newReceiverList = [...mailReceivers.value, emailForm.email].map(email => ({ email }))
+
+        await axios.post('http://localhost:8000/projects/update_mailreceiver', {
+           codename: currentCodename.value,
+           mailreceivers: newReceiverList
+        }, { headers: { Authorization: `Bearer ${token}` } })
+        
+        ElMessage.success(`成功新增通知信箱：${emailForm.email}`)
+        emailDialogVisible.value = false
+        
+        if (currentCodename.value) {
+          await fetchProjectMembers(currentCodename.value)
+        }
+
+      } catch (error) {
+        console.error(error)
+        ElMessage.error('更新失敗，請稍後再試')
+      } finally {
+        addingEmail.value = false
+      }
+    }
+  })
+}
+
+const preventNonNumericInput = (e: KeyboardEvent) => {
+  if (['e', 'E', '+', '-', '.'].includes(e.key)) {
+    e.preventDefault();
+  }
+}
+
+// 勾選權限控制
+const checkSelectable = (row: any) => {
+  return canEdit.value
+}
+
 const fetchAllUsers = async () => {
   try {
     const token = localStorage.getItem('auth_token')
@@ -216,17 +525,16 @@ const fetchAllUsers = async () => {
   }
 }
 
-// 獲取專案詳細資訊
 const fetchProjectMembers = async (codename: string) => {
   if (!codename || codename === 'all') {
     projectInfo.value = []
+    combinedList.value = []
     currentProjectRole.value = ''
     return
   }
 
   loadingMembers.value = true
   try {
-    // 確保有 Email 資料
     if (allUsers.value.length === 0) {
       await fetchAllUsers()
     }
@@ -240,49 +548,162 @@ const fetchProjectMembers = async (codename: string) => {
     if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
       const data = res.data.data
       projectInfo.value = data.projectinfo || []
+      mailReceivers.value = (data.mailreceivers || []).map((m: any) => m.email) 
+      rotationForm.value.days = data.rotation || 365
       
       const myInfo = projectInfo.value.find((m: any) => m.username === currentUsername.value)
       currentProjectRole.value = myInfo ? myInfo.projectrole : 'viewer'
+
+      // 整合資料
+      const tempList: any[] = []
       
-      // 此處可根據需求預設勾選某些人，目前重置
+      projectInfo.value.forEach(member => {
+        const userDetail = allUsers.value.find(u => u.username === member.username)
+        tempList.push({
+          ...member,
+          email: userDetail ? userDetail.email : '', 
+        })
+      })
+
+      mailReceivers.value.forEach(email => {
+        const exists = tempList.some(m => m.email === email)
+        if (!exists) {
+           tempList.push({ username: '', email: email, projectrole: 'email' })
+        }
+      })
+
+      combinedList.value = tempList
+
+      await nextTick()
+      if (memberTableRef.value) {
+        memberTableRef.value.clearSelection()
+        combinedList.value.forEach(row => {
+          if (row.email && mailReceivers.value.includes(row.email)) {
+             memberTableRef.value!.toggleRowSelection(row, true)
+          }
+        })
+      }
+
     } else {
       projectInfo.value = []
+      combinedList.value = []
     }
   } catch (error) {
     console.error(error)
-    ElMessage.error('無法獲取專案成員資訊')
+    ElMessage.error('獲取專案資料失敗')
   } finally {
     loadingMembers.value = false
   }
 }
 
-// Table Selection Change
 const handleSelectionChange = (val: any[]) => {
   selectedMembers.value = val
 }
 
-// --- Save Methods ---
+const fetchMailSettings = async () => {
+  loadingMailSettings.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await axios.get('http://localhost:8000/mail_sender/get', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
 
-const saveNotificationMembers = () => {
-  const selectedNames = selectedMembers.value.map(m => m.username)
-  console.log('Selected Members:', selectedNames)
-  ElMessage.success(`已更新通知名單，共勾選 ${selectedNames.length} 位成員`)
+    if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
+      const data = res.data.data
+      mailForm.value = {
+        sender: data.mail_sender || '',
+        smtp_pwd: data.smtp_pwd || '',
+        subject: data.subject || '',
+        content: data.content || ''
+      }
+    }
+  } catch (error) {
+    console.error('Fetch mail settings error', error)
+  } finally {
+    loadingMailSettings.value = false
+  }
 }
 
-const saveRotationSettings = () => {
-  ElMessage.success(`輪替天數設定已更新為 ${rotationForm.value.days} 天`)
+const saveNotificationMembers = async () => {
+  const mailReceiverPayload = selectedMembers.value
+    .map(m => m.email)
+    .filter(email => email) 
+    .map(email => ({ email: email })) 
+
+  try {
+     const token = localStorage.getItem('auth_token')
+     
+     await axios.post('http://localhost:8000/projects/update_mailreceiver', {
+        codename: currentCodename.value,
+        mailreceivers: mailReceiverPayload
+     }, { headers: { Authorization: `Bearer ${token}` } })
+
+     ElMessage.success(`已更新通知名單，共 ${mailReceiverPayload.length} 個信箱`)
+  } catch (e) {
+     console.error(e)
+     ElMessage.error('更新失敗')
+  }
 }
 
-// --- Watchers ---
+const saveRotationSettings = async () => {
+  try {
+     const token = localStorage.getItem('auth_token')
+     await axios.post('http://localhost:8000/projects/update_rotation', {
+        codename: currentCodename.value,
+        rotation: rotationForm.value.days,
+     }, { headers: { Authorization: `Bearer ${token}` } })
+     ElMessage.success(`[${currentCodename.value}] 輪替天數設定已更新為 ${rotationForm.value.days} 天`)
+  } catch (e) {
+     console.error(e)
+     ElMessage.error('更新輪替天數失敗')
+  }
+}
+
+const saveMailSettings = async () => {
+  try {
+    const token = localStorage.getItem('auth_token')
+    const payload = {
+      mail_sender: mailForm.value.sender,
+      smtp_pwd: mailForm.value.smtp_pwd,
+      subject: mailForm.value.subject,
+      content: mailForm.value.content
+    }
+
+    await axios.post('http://localhost:8000/mail_sender/update', payload, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    ElMessage.success('信件內容設定已儲存')
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('儲存信件設定失敗')
+  }
+}
+
 watch(currentCodename, (newCode) => {
   if (newCode) {
     fetchProjectMembers(newCode)
+    searchQuery.value = ''
+    userFilter.value = 'all'
+    roleFilter.value = 'all' // 專案變更時重置角色篩選
   }
 }, { immediate: true })
+
+onMounted(() => {
+  if (auth.isSuperuser) fetchMailSettings()
+})
 
 </script>
 
 <style scoped>
+/* CSS 禁用表頭全選框：滑鼠點擊無效 + 灰色透明感 */
+.disable-header-checkbox :deep(.el-table__header-wrapper .el-table-column--selection .el-checkbox) {
+  pointer-events: none;
+  cursor: not-allowed;
+  opacity: 0.4;
+  filter: grayscale(100%);
+}
+
 .settings-page {
   padding: 20px;
   background-color: #f5f7fa;
@@ -296,7 +717,6 @@ watch(currentCodename, (newCode) => {
   flex-direction: column;
 }
 
-/* 讓 Tabs 撐滿 */
 .full-height-tabs {
   flex: 1;
   display: flex;
@@ -306,20 +726,18 @@ watch(currentCodename, (newCode) => {
 
 .el-tabs :deep(.el-tabs__content) {
   flex: 1;
-  padding: 30px; /* 增加內距 */
+  padding: 30px;
 }
 
-/* Tab 標籤樣式 */
 .el-tabs :deep(.el-tabs__item) {
   font-size: 16px;
   height: 50px;
   line-height: 50px;
 }
 
-/* --- 通知設定頁面樣式 --- */
 .top-section {
   display: flex;
-  justify-content: flex-end; /* 改為靠右 */
+  justify-content: flex-end;
   margin-bottom: 40px;
 }
 
@@ -328,6 +746,12 @@ watch(currentCodename, (newCode) => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+}
+
+.controls-right {
+  display: flex;
+  gap: 15px;
+  align-items: center;
 }
 
 .filter-box {
@@ -341,10 +765,10 @@ watch(currentCodename, (newCode) => {
   margin-right: 8px;
 }
 
-.action-footer {
-  margin-top: 40px; /* 增加按鈕與表格的距離 */
+.action-footer, .form-btn-item {
+  margin-top: 40px;
   display: flex;
-  justify-content: center; /* 儲存按鈕置中 */
+  justify-content: center;
 }
 
 .save-btn {
@@ -353,19 +777,31 @@ watch(currentCodename, (newCode) => {
   letter-spacing: 1px;
 }
 
-/* --- 輪替天數設定頁面樣式 --- */
 .rotation-tab {
   height: 100%;
 }
 
-.rotation-center-wrapper {
+.rotation-settings-container, .mail-settings-container {
+    height: 100%;
+}
+
+.empty-block {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    min-height: 300px;
+}
+
+.rotation-center-wrapper, .mail-form-wrapper {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  justify-content: center; 
+  align-items: center;      
   height: 100%;
-  min-height: 400px; /* 確保有足夠高度進行置中 */
-  gap: 40px; /* 元件間距加大 */
+  min-height: 400px;
+  gap: 30px;
+  width: 100%;
 }
 
 .info-alert {
@@ -373,11 +809,16 @@ watch(currentCodename, (newCode) => {
   max-width: 600px;
 }
 
-.rotation-form {
+.rotation-form, .mail-form {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 30px;
+  gap: 20px;
+  width: 100%;
+  max-width: 600px; 
+}
+
+.rotation-form {
+  align-items: center; 
 }
 
 .input-with-unit {
@@ -392,7 +833,27 @@ watch(currentCodename, (newCode) => {
   font-weight: 500;
 }
 
-.form-btn-item {
-  margin-top: 20px;
+:deep(.el-form-item__label) {
+  font-weight: 500;
+  font-size: 16px;
+}
+
+/* 控制下拉選單最大高度 */
+:deep(.user-select-dropdown .el-select-dropdown__wrap) {
+  max-height: 200px; 
+}
+
+/* 確保彈窗內距充足 */
+.email-dialog-content {
+  padding: 30px 50px;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Modal 內的輸入框間距 */
+:deep(.email-form-in-modal .el-form-item) {
+  margin-bottom: 40px;
 }
 </style>

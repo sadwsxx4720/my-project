@@ -12,12 +12,54 @@
         <h2 class="page-title">
           {{ projectname }} 
           <span class="subtitle">({{ codename }})</span>
+          <el-tag :type="viewType === 'key' ? 'warning' : 'primary'" class="type-tag">
+            {{ viewType === 'key' ? '金鑰詳細資訊' : '人員詳細資訊' }}
+          </el-tag>
         </h2>
       </div>
     </div>
 
-    <!-- 主要內容區 -->
-    <el-card shadow="never" v-loading="loading">
+    <!-- 1. 新增：專案金鑰狀態圖表區塊 -->
+    <el-row :gutter="20" class="chart-row">
+      <!-- (1) 此專案全部金鑰 -->
+      <el-col :span="8">
+        <el-card shadow="hover" class="chart-card">
+          <template #header>
+            <div class="card-header-center">專案金鑰總覽</div>
+          </template>
+          <div class="chart-container">
+             <canvas id="projectAllKeysChart"></canvas>
+          </div>
+        </el-card>
+      </el-col>
+      
+      <!-- (2) 此專案 AWS 金鑰 -->
+      <el-col :span="8">
+        <el-card shadow="hover" class="chart-card">
+          <template #header>
+            <div class="card-header-center">AWS 金鑰狀態</div>
+          </template>
+          <div class="chart-container">
+            <canvas id="projectAwsKeysChart"></canvas>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- (3) 此專案 GCP 金鑰 -->
+      <el-col :span="8">
+        <el-card shadow="hover" class="chart-card">
+          <template #header>
+            <div class="card-header-center">GCP 金鑰狀態</div>
+          </template>
+          <div class="chart-container">
+            <canvas id="projectGcpKeysChart"></canvas>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 2. 主要內容區 (列表) -->
+    <el-card shadow="never" v-loading="loading" class="content-card">
       
       <!-- 情境 A: 金鑰列表 (View Type = key) -->
       <div v-if="viewType === 'key'">
@@ -57,11 +99,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
+import Chart, { type ChartItem, type ChartConfiguration } from 'chart.js/auto'
 
 definePageMeta({
   layout: 'default'
@@ -73,12 +116,15 @@ const router = useRouter()
 // --- Query Params ---
 const codename = computed(() => route.query.codename as string || '')
 const projectname = computed(() => route.query.projectname as string || '未命名專案')
-const viewType = computed(() => route.query.type as 'key' | 'user') // 'key' or 'user'
+const viewType = computed(() => route.query.type as 'key' | 'user') 
 
 // --- State ---
 const loading = ref(false)
 const projectKeys = ref<any[]>([])
 const projectUsers = ref<any[]>([])
+
+// 圖表實例
+let chartInstances: Chart[] = []
 
 // --- Methods ---
 
@@ -91,7 +137,7 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString()
 }
 
-// 獲取資料的主邏輯
+// 初始化資料 (包含列表與圖表)
 const fetchData = async () => {
   if (!codename.value) {
     ElMessage.warning('缺少專案代號')
@@ -100,40 +146,169 @@ const fetchData = async () => {
 
   loading.value = true
   const token = localStorage.getItem('auth_token')
+  const headers = { Authorization: `Bearer ${token}` }
 
   try {
+    // 1. 無論如何都需要 fetch keys 和 clouds 來畫圖表
+    const [keysRes, cloudsRes] = await Promise.all([
+      axios.get(`http://localhost:8000/keys/get_all?t=${Date.now()}`, { headers }),
+      axios.get(`http://localhost:8000/clouds/get_all?t=${Date.now()}`, { headers })
+    ])
+
+    let allKeys = []
+    let allClouds = []
+
+    if (keysRes.data && (keysRes.data.code === 0 || keysRes.data.code === 200)) {
+       allKeys = keysRes.data.data || []
+    }
+    
+    if (cloudsRes.data && (cloudsRes.data.code === 0 || cloudsRes.data.code === 200)) {
+       allClouds = cloudsRes.data.data || []
+    }
+
+    // 2. 過濾出屬於此專案的金鑰 (用於列表顯示 + 圖表計算)
+    const filteredKeys = allKeys.filter((k: any) => k.codename === codename.value)
+    
     if (viewType.value === 'key') {
-      // 1. 獲取金鑰資料
-      // 邏輯：打 /keys/get_all 取回全部，然後前端 filter 此專案的 codename
-      const res = await axios.get('http://localhost:8000/keys/get_all', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      projectKeys.value = filteredKeys
+    }
 
-      if (res.data && (res.data.code === 0 || res.data.code === 200)) {
-        const allKeys = res.data.data || []
-        // 前端篩選
-        projectKeys.value = allKeys.filter((k: any) => k.codename === codename.value)
-      }
+    // 3. 繪製圖表 (使用過濾後的專案金鑰數據)
+    await processAndRenderProjectCharts(filteredKeys, allClouds)
 
-    } else if (viewType.value === 'user') {
-      // 2. 獲取人員資料
-      // 邏輯：打 /projects/get_one (或 get_all) 取得該專案詳細資訊中的 projectinfo
-      // 這裡假設使用 POST /projects/get_one，因為在之前的對話中有提到這個 API
-      const res = await axios.post('http://localhost:8000/projects/get_one', 
+    // 4. 如果是查看人員，需額外打 projects API
+    if (viewType.value === 'user') {
+      const projRes = await axios.post('http://localhost:8000/projects/get_one', 
         { codename: codename.value },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers }
       )
-      
-      if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
-        projectUsers.value = res.data.data.projectinfo || []
+      if (projRes.data && (projRes.data.code === 0 || projRes.data.code === 200) && projRes.data.data) {
+        projectUsers.value = projRes.data.data.projectinfo || []
       }
     }
+
   } catch (error) {
     console.error('Fetch detail error:', error)
     ElMessage.error('獲取詳細資料失敗')
   } finally {
     loading.value = false
   }
+}
+
+// --- Chart Logic ---
+
+const processAndRenderProjectCharts = async (projectKeysData: any[], cloudServices: any[]) => {
+    // 建立 Key ID -> Cloud Type 對應表
+    const keyCloudMap = new Map<string, string>()
+
+    cloudServices.forEach((service: any) => {
+        const type = service.cloud_type
+        if (Array.isArray(service.keys)) {
+            service.keys.forEach((k: any) => {
+                if (k.key_id) keyCloudMap.set(k.key_id, type)
+            })
+        }
+    })
+
+    // 統計數據 (只統計當前專案)
+    const stats = {
+        all: { active: 0, disabled: 0 },
+        aws: { active: 0, disabled: 0 },
+        gcp: { active: 0, disabled: 0 }
+    }
+
+    projectKeysData.forEach((key: any) => {
+        const isActive = key.key_state === 'Active'
+        const keyId = key.key_id
+        const cloudType = keyCloudMap.get(keyId)
+
+        // 總計
+        if (isActive) stats.all.active++
+        else stats.all.disabled++
+
+        // 分類
+        if (cloudType === 'AWS') {
+            if (isActive) stats.aws.active++
+            else stats.aws.disabled++
+        } else if (cloudType === 'GCP') {
+            if (isActive) stats.gcp.active++
+            else stats.gcp.disabled++
+        }
+    })
+
+    await nextTick()
+    renderCharts(stats)
+}
+
+const renderCharts = (stats: any) => {
+    chartInstances.forEach(chart => chart.destroy())
+    chartInstances = []
+
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'bottom' as const },
+            tooltip: { enabled: true }
+        }
+    }
+
+    // 自定義中心文字 Plugin
+    const centerTextPlugin = {
+        id: 'centerText',
+        beforeDraw(chart: any) {
+            const { ctx, chartArea: { top, right, bottom, left, width, height } } = chart;
+            ctx.save();
+            const total = chart.data.datasets[0].data.reduce((a: number, b: number) => a + b, 0);
+            
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillStyle = '#303133';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const centerX = (left + right) / 2;
+            const centerY = (top + bottom) / 2;
+            
+            ctx.fillText(`${total}`, centerX, centerY - 8);
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#909399';
+            ctx.fillText('總數', centerX, centerY + 16);
+            ctx.restore();
+        }
+    }
+
+    const createConfig = (active: number, disabled: number): ChartConfiguration => ({
+        type: 'doughnut',
+        data: {
+            labels: ['啟用 (Active)', '停用 (Disabled)'],
+            datasets: [{
+                data: [active, disabled],
+                backgroundColor: ['#67C23A', '#F56C6C'],
+                borderWidth: 1,
+                cutout: '70%'
+            }]
+        },
+        options: commonOptions,
+        plugins: [centerTextPlugin]
+    })
+
+    // 1. All Keys
+    const ctxAll = document.getElementById('projectAllKeysChart') as HTMLCanvasElement
+    if (ctxAll) {
+        chartInstances.push(new Chart(ctxAll, createConfig(stats.all.active, stats.all.disabled)))
+    }
+
+    // 2. AWS
+    const ctxAws = document.getElementById('projectAwsKeysChart') as HTMLCanvasElement
+    if (ctxAws) {
+        chartInstances.push(new Chart(ctxAws, createConfig(stats.aws.active, stats.aws.disabled)))
+    }
+
+    // 3. GCP
+    const ctxGcp = document.getElementById('projectGcpKeysChart') as HTMLCanvasElement
+    if (ctxGcp) {
+        chartInstances.push(new Chart(ctxGcp, createConfig(stats.gcp.active, stats.gcp.disabled)))
+    }
 }
 
 // --- Lifecycle ---
@@ -203,5 +378,34 @@ onMounted(() => {
 .type-tag {
   margin-left: 10px;
   font-weight: normal;
+}
+
+/* 圖表樣式 */
+.chart-row {
+  margin-bottom: 20px;
+}
+
+.chart-card {
+    height: 300px;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-header-center {
+    text-align: center;
+    font-weight: bold;
+    color: #303133;
+}
+
+.chart-container {
+    position: relative;
+    height: 200px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.content-card {
+  min-height: 300px;
 }
 </style>

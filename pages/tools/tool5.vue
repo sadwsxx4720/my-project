@@ -1,36 +1,30 @@
 <template>
   <div class="project-members-container">
     
-    <!-- 1. 未選擇專案時的提示 -->
     <div v-if="!currentProjectCode || currentProjectCode === 'all'" class="empty-state">
       <el-empty description="請先由上方選擇一個特定專案以管理人員" />
     </div>
 
-    <!-- 2. 主要內容區 (已選擇專案) -->
     <div v-else class="content-wrapper">
       
-      <!-- 頁面標題與操作區 -->
       <div class="page-header">
         <div class="header-left">
           <h2 class="page-title">專案人員列表</h2>
           <span class="project-badge">
             目前專案：{{ currentProjectName }} ({{ currentProjectCode }})
           </span>
-          <!-- 權限徽章 -->
           <el-tag :type="currentUserProjectRole === 'admin' ? 'danger' : 'info'" class="role-badge">
             您的權限：{{ currentUserProjectRole ? currentUserProjectRole.toUpperCase() : '無權限/未知' }}
           </el-tag>
         </div>
 
         <div class="header-right">
-          <!-- 角色篩選 -->
           <el-select v-model="filterRole" placeholder="篩選角色" style="width: 150px; margin-right: 10px;">
             <el-option label="顯示全部" value="all" />
             <el-option label="Admin" value="admin" />
             <el-option label="Viewer" value="viewer" />
           </el-select>
 
-          <!-- 新增權限按鈕 (僅 Admin 可見) -->
           <el-button 
             v-if="currentUserProjectRole === 'admin'" 
             type="primary" 
@@ -42,7 +36,6 @@
         </div>
       </div>
 
-      <!-- 人員列表表格 -->
       <el-card shadow="never" class="table-card" v-loading="loading">
         <el-table :data="filteredMembers" style="width: 100%" stripe border>
           <el-table-column prop="username" label="使用者名稱" sortable />
@@ -55,7 +48,6 @@
             </template>
           </el-table-column>
 
-          <!-- 操作欄 (僅 Admin 可見) -->
           <el-table-column 
             v-if="currentUserProjectRole === 'admin'" 
             label="操作" 
@@ -63,7 +55,6 @@
             align="center"
           >
             <template #default="scope">
-              <!-- 只保留移除按鈕 -->
               <el-button 
                 v-if="scope.row.username !== auth.user?.username"
                 size="small" 
@@ -72,18 +63,15 @@
                 :loading="processingUser === scope.row.username"
                 @click="removeMember(scope.row)"
               >
-                移除使用者
+                移除
               </el-button>
-              <span v-else class="text-gray-400 text-xs">X</span>
+              <span v-else class="text-gray-400 text-xs">無法移除自己</span>
             </template>
           </el-table-column>
         </el-table>
       </el-card>
     </div>
 
-    <!-- ========================================== -->
-    <!-- Modal: 新增權限 (僅限 Viewer) -->
-    <!-- ========================================== -->
     <el-dialog
       v-model="addMemberVisible"
       title="新增權限"
@@ -92,14 +80,37 @@
       append-to-body
     >
       <div class="modal-content">
-        <!-- 固定顯示 Viewer -->
-        <div class="mb-4 role-display">
-          <span class="label">指派權限：</span>
-          <el-tag type="info">Viewer</el-tag>
+        
+        <div class="mb-4 role-controls">
+          <div class="left-group">
+            <div class="role-display">
+              <span class="label">指派權限：</span>
+              <el-tag type="info">Viewer</el-tag>
+            </div>
+            
+            <el-tag 
+              type="warning" 
+              effect="plain" 
+              class="ml-3"
+            >
+              已勾選: {{ selectedUsers.length }} 人
+            </el-tag>
+          </div>
+          
+          <div class="search-box">
+             <el-input
+                v-model="searchMemberQuery"
+                placeholder="搜尋使用者名稱..."
+                prefix-icon="Search"
+                size="small"
+                clearable
+                style="width: 200px;"
+             />
+          </div>
         </div>
 
         <el-table 
-          :data="usersNotInProject" 
+          :data="filteredUsersNotInProject" 
           @selection-change="handleSelectionChange"
           height="300"
           border
@@ -119,7 +130,7 @@
           @click="confirmAddMembers"
           :disabled="selectedUsers.length === 0"
         >
-          確定新增
+          確定新增 ({{ selectedUsers.length }})
         </el-button>
       </template>
     </el-dialog>
@@ -132,7 +143,7 @@ import { ref, computed, watch } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import axios from 'axios';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Plus, Delete } from '@element-plus/icons-vue';
+import { Plus, Delete, Search } from '@element-plus/icons-vue'; 
 
 // --- Type Definitions ---
 interface ProjectInfo {
@@ -172,9 +183,9 @@ const filterRole = ref('all'); // all, admin, viewer
 
 // Modal State
 const addMemberVisible = ref(false);
-// 固定為 viewer
-const newMemberRole = ref('viewer');
+const newMemberRole = ref('viewer'); // 固定為 viewer
 const selectedUsers = ref<ApiUser[]>([]);
+const searchMemberQuery = ref(''); 
 
 // --- Computed ---
 
@@ -192,9 +203,20 @@ const filteredMembers = computed(() => {
   return projectMembers.value.filter(m => m.projectrole === filterRole.value);
 });
 
+// 尚未加入專案的使用者 (原始清單)
 const usersNotInProject = computed(() => {
   const currentMemberNames = projectMembers.value.map(m => m.username);
   return allSystemUsers.value.filter(u => !currentMemberNames.includes(u.username));
+});
+
+// 過濾後的未加入專案使用者 (加入搜尋邏輯)
+const filteredUsersNotInProject = computed(() => {
+  let users = usersNotInProject.value;
+  if (searchMemberQuery.value) {
+    const q = searchMemberQuery.value.toLowerCase();
+    users = users.filter(u => u.username.toLowerCase().includes(q));
+  }
+  return users;
 });
 
 // --- Methods ---
@@ -269,7 +291,6 @@ const fetchAllUsers = async () => {
 
 const updateProjectApi = async (newProjectInfo: ProjectInfo[]) => {
   const token = localStorage.getItem('auth_token');
-  // POST projects/update: { codename: "...", projectinfo: [...] }
   return axios.post('http://localhost:8000/projects/update', {
     codename: currentProjectCode.value,
     projectinfo: newProjectInfo
@@ -281,6 +302,7 @@ const updateProjectApi = async (newProjectInfo: ProjectInfo[]) => {
 const openAddMemberModal = async () => {
   addMemberVisible.value = true;
   selectedUsers.value = [];
+  searchMemberQuery.value = ''; 
   if (allSystemUsers.value.length === 0) {
     await fetchAllUsers();
   }
@@ -308,11 +330,10 @@ const confirmAddMembers = async () => {
       projectrole: 'viewer' 
     }));
 
-    // 3. 合併列表 (產生 user1, user3, user4 的最終名單)
+    // 3. 合併列表
     const updatedProjectInfo = [...existingMembers, ...newMembers];
     
     // 4. 呼叫 projects/update API
-    // 根據後端邏輯，這會自動同步資料庫中的 Users collection
     await updateProjectApi(updatedProjectInfo);
 
     ElMessage.success('新增成員成功');
@@ -320,7 +341,7 @@ const confirmAddMembers = async () => {
     
     // 5. 重新抓取資料以更新畫面
     await fetchProjectData(currentProjectCode.value);
-    await fetchAllUsers(); 
+    await fetchAllUsers();
 
   } catch (error) {
     console.error(error);
@@ -341,7 +362,7 @@ const removeMember = async (member: ProjectInfo) => {
     processingUser.value = member.username;
 
     try {
-      // 1. 過濾出移除後的成員列表 (產生 user1, user3 的最終名單)
+      // 1. 過濾出移除後的成員列表
       const updatedProjectInfo = projectMembers.value
         .filter(m => m.username !== member.username)
         .map(m => ({
@@ -349,7 +370,7 @@ const removeMember = async (member: ProjectInfo) => {
           projectrole: m.projectrole
         }));
 
-      // 2. 呼叫 projects/update API (後端自動同步)
+      // 2. 呼叫 projects/update API
       await updateProjectApi(updatedProjectInfo);
 
       ElMessage.success('移除成員成功');
@@ -441,6 +462,17 @@ watch(currentProjectCode, async (newCode) => {
   padding: 10px;
 }
 
+.role-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.left-group {
+  display: flex;
+  align-items: center;
+}
+
 .role-display {
   display: flex;
   align-items: center;
@@ -456,7 +488,7 @@ watch(currentProjectCode, async (newCode) => {
 .mb-4 {
   margin-bottom: 20px;
 }
-.mr-2 {
-  margin-right: 10px;
+.ml-3 {
+  margin-left: 12px;
 }
 </style>

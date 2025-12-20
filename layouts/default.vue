@@ -83,7 +83,6 @@
               <template #title> <el-icon><Key /></el-icon> <span>金鑰管理模組</span> </template>
               <el-menu-item index="tool1">金鑰清單</el-menu-item>
               <el-menu-item index="tool3">金鑰資訊圖表</el-menu-item>
-              <el-menu-item index="tool4">金鑰輪替及更換</el-menu-item>
               
               <!-- 專案人員管理：非 Superuser 才顯示 -->
               <el-menu-item 
@@ -95,11 +94,11 @@
             </el-sub-menu>
 
             <!-- 帳號管理 -->
-            <el-sub-menu index="account">
-              <template #title> <el-icon><User /></el-icon> <span>帳號管理</span> </template>
-              <el-menu-item index="log1">帳號操作日誌</el-menu-item>
-            </el-sub-menu>
-            
+            <el-menu-item index="clouds"><el-icon><Cloudy /></el-icon>雲平台清單</el-menu-item>
+
+            <!-- 帳號管理 -->
+              <el-menu-item index="log1"><el-icon><User /></el-icon>帳號操作日誌</el-menu-item>
+         
             <!-- 專案管理：僅 Superuser 顯示 -->
             <el-menu-item 
               v-if="auth.isSuperuser" 
@@ -134,7 +133,8 @@ import {
   House, 
   User, 
   Key,
-  Bell
+  Bell,
+  Cloudy
 } from '@element-plus/icons-vue'
 import { computed, watch, ref } from 'vue' 
 import { useAuthStore } from '@/stores/auth'
@@ -164,7 +164,7 @@ const activeMenu = computed(() => {
   
   if (path.startsWith('/account')) return 'account1'
   if (path.startsWith('/log')) return 'log1'
-  
+  if (path.startsWith('/clouds')) return 'clouds'
   if (path.startsWith('/project')) return 'project-manage'
   if (path.startsWith('/settings')) return 'settings'
   if (path.startsWith('/notifications')) return 'notifications'
@@ -259,6 +259,9 @@ const handleMenuSelect = (index: string) => {
     case 'tool3': router.push('/tools/tool3'); break
     case 'tool4': router.push('/tools/tool4'); break
     case 'tool5': router.push('/tools/tool5'); break 
+
+    //雲平台清單
+    case 'clouds': router.push('/clouds'); break
     
     // 帳號管理與日誌
     case 'log1': router.push('/log'); break 
