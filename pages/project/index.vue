@@ -428,23 +428,7 @@ const fetchUsers = async () => {
   }
 };
 
-const updateUserApi = async (user: ApiUser, newCodenames: string[]) => {
-  const token = localStorage.getItem('auth_token');
-  if (!token) throw new Error('未登入');
 
-  const payload = {
-    username: user.username,
-    password: user.password || '',
-    role: user.role,
-    email: user.email,
-    codename: newCodenames, 
-    projects: newCodenames.map(code => ({ codename: code })) 
-  };
-
-  return await axios.post('http://localhost:8000/users/update', payload, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-};
 
 const updateProjectApi = async (projectCodename: string, newProjectInfo: ProjectInfo[]) => {
   const token = localStorage.getItem('auth_token');
@@ -485,7 +469,6 @@ const deleteProject = async (project: Project) => {
       const updatePromises = usersToUpdate.map(user => {
         const currentCodenames = user.projects ? user.projects.map(p => p.codename) : [];
         const newCodenames = currentCodenames.filter(c => c !== projectCode);
-        return updateUserApi(user, newCodenames);
       });
 
       await Promise.all(updatePromises);
@@ -617,8 +600,6 @@ const finishAddProject = async () => {
         const newCodenames = currentCodenames.includes(projectCode) 
           ? currentCodenames 
           : [...currentCodenames, projectCode];
-
-        return updateUserApi(user, newCodenames);
       });
 
       await Promise.all(updatePromises);

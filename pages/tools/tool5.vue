@@ -291,7 +291,7 @@ const fetchAllUsers = async () => {
 
 const updateProjectApi = async (newProjectInfo: ProjectInfo[]) => {
   const token = localStorage.getItem('auth_token');
-  return axios.post('http://localhost:8000/projects/update', {
+  return axios.post('http://localhost:8000/projects/update_member', {
     codename: currentProjectCode.value,
     projectinfo: newProjectInfo
   }, { headers: { Authorization: `Bearer ${token}` } });

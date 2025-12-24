@@ -162,7 +162,6 @@ const activeMenu = computed(() => {
     if (toolIndex) return toolIndex; 
   }
   
-  if (path.startsWith('/account')) return 'account1'
   if (path.startsWith('/log')) return 'log1'
   if (path.startsWith('/clouds')) return 'clouds'
   if (path.startsWith('/project')) return 'project-manage'
@@ -265,7 +264,6 @@ const handleMenuSelect = (index: string) => {
     
     // 帳號管理與日誌
     case 'log1': router.push('/log'); break 
-    case 'account1': router.push('/account'); break 
     
     // 系統管理與通知
     case 'project-manage': router.push('/project'); break 

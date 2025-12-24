@@ -4,6 +4,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { Refresh } from '@element-plus/icons-vue' // 引入 Refresh icon
 
 definePageMeta({
   layout: 'default'
@@ -37,10 +38,13 @@ interface CloudService {
 // --- State ---
 const cloudServices = ref<CloudService[]>([]) // 儲存 API 回傳的資料
 const loading = ref(false)
+const isUpdating = ref(false) // 控制更新按鈕的 loading 狀態
 const selectedCloudType = ref('all') // 雲平台篩選
 const searchQuery = ref('') // 關鍵字搜尋
 
 // --- API Functions ---
+
+// 1. 獲取雲服務列表
 const fetchCloudServices = async () => {
   try {
     loading.value = true
@@ -51,12 +55,12 @@ const fetchCloudServices = async () => {
       return
     }
 
-    // 【修正】打 clouds/get_all API
+    // 打 clouds/get_all API
     const res = await axios.get('http://localhost:8000/clouds/get_all', {
       headers: { Authorization: `Bearer ${savedToken}` }
     })
 
-    // 【修正】根據提供的 JSON，code 為 200
+    // 根據提供的 JSON，code 為 200
     if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
       cloudServices.value = res.data.data
     } else {
@@ -69,6 +73,38 @@ const fetchCloudServices = async () => {
     cloudServices.value = [];
   } finally {
     loading.value = false
+  }
+}
+
+// 2. 手動觸發更新資料 (打 summary API)
+const handleUpdateData = async () => {
+  try {
+    isUpdating.value = true
+    const savedToken = localStorage.getItem('auth_token')
+    if (!savedToken) {
+      ElMessage.error('尚未登入，請先登入')
+      router.push('/login')
+      return
+    }
+
+    const headers = { Authorization: `Bearer ${savedToken}` }
+
+    // 同時呼叫 AWS 和 GCP 的 summary API
+    await Promise.allSettled([
+      axios.get('http://localhost:8000/cloud_platform/aws/iam/summary', { headers }),
+      axios.get('http://localhost:8000/cloud_platform/gcp/iam/summary', { headers })
+    ])
+    
+    ElMessage.success('已完成資料更新請求，正在重新整理列表...')
+
+    // 無論成功與否，重新獲取列表以顯示最新狀態
+    await fetchCloudServices()
+
+  } catch (err) {
+    console.error("更新資料發生錯誤:", err)
+    ElMessage.error('更新資料失敗')
+  } finally {
+    isUpdating.value = false
   }
 }
 
@@ -92,7 +128,6 @@ const filteredData = computed(() => {
 
   return cloudServices.value.filter(service => {
     // 1. 專案代號篩選 (Codename Filter)
-    // 資料結構是 service.projects: [{codename: 'A'}, {codename: 'B'}]
     const serviceCodenames = service.projects ? service.projects.map(p => p.codename) : [];
     
     let codenameMatch = false;
@@ -115,7 +150,6 @@ const filteredData = computed(() => {
     }
 
     // 3. 關鍵字搜尋 (Search Query)
-    // 搜尋範圍：Cloud ID, User Account, Key ID
     if (query) {
         const inCloudId = service.cloud_account_id?.toLowerCase().includes(query);
         const inUserAccount = service.user_account?.toLowerCase().includes(query);
@@ -164,7 +198,7 @@ onMounted(async () => {
               v-model="selectedCloudType"
               placeholder="選擇平台類型"
               size="small"
-              style="width: 200px; margin-right: 10px;"
+              style="width: 150px; margin-right: 10px;"
               clearable
             >
               <el-option
@@ -180,9 +214,20 @@ onMounted(async () => {
               v-model="searchQuery"
               placeholder="搜尋平台ID、帳號或金鑰..." 
               size="small" 
-              style="width: 300px;" 
+              style="width: 250px; margin-right: 10px;" 
               clearable
             /> 
+            
+            <!-- 更新資料按鈕 -->
+            <el-button 
+              type="success" 
+              size="small" 
+              :icon="Refresh" 
+              :loading="isUpdating"
+              @click="handleUpdateData"
+            >
+              更新資料
+            </el-button>
           </div>
         </div>
       </template>
@@ -234,8 +279,8 @@ onMounted(async () => {
              </template>
           </el-table-column>
 
-          <!-- 操作欄位：移除 fixed="right"，增加寬度 -->
-          <el-table-column label="操作" width="160" align="center"> 
+          <!-- 操作欄位 (移除 fixed) -->
+          <el-table-column label="操作" width="120" align="center"> 
             <template #default="scope">
               <el-button
                 size="small"

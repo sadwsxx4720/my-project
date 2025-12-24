@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Plus, Delete, VideoPause, VideoPlay, Search } from '@element-plus/icons-vue'
+import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh } from '@element-plus/icons-vue' // 【修改】加入 Refresh
 
 definePageMeta({
   layout: 'default'
@@ -30,6 +30,7 @@ interface KeyData {
 // --- State ---
 const keyList = ref<KeyData[]>([]) 
 const loading = ref(false)
+const isUpdating = ref(false) // 【新增】更新按鈕 loading 狀態
 const searchQuery = ref('') 
 const cloudTypeFilter = ref('all') 
 const currentUserProjectRole = ref<string>('') 
@@ -82,6 +83,38 @@ const fetchKeys = async () => {
     keyList.value = [];
   } finally {
     loading.value = false
+  }
+}
+
+// 【新增】更新資料功能
+const handleUpdateData = async () => {
+  try {
+    isUpdating.value = true
+    const savedToken = localStorage.getItem('auth_token')
+    if (!savedToken) {
+      ElMessage.error('尚未登入')
+      return
+    }
+
+    const headers = { Authorization: `Bearer ${savedToken}` }
+    const timestamp = new Date().getTime()
+
+    // 同時呼叫 AWS Summary, GCP Summary
+    await Promise.allSettled([
+      axios.get(`http://localhost:8000/cloud_platform/gcp/iam/summary?t=${timestamp}`, { headers }),
+      axios.get(`http://localhost:8000/cloud_platform/aws/iam/summary?t=${timestamp}`, { headers })
+    ])
+    
+    // 重新獲取金鑰列表
+    await fetchKeys()
+    
+    ElMessage.success('資料更新完成')
+
+  } catch (err) {
+    console.error("更新資料發生錯誤:", err)
+    ElMessage.error('更新資料失敗')
+  } finally {
+    isUpdating.value = false
   }
 }
 
@@ -184,13 +217,10 @@ const projectOptions = computed(() => {
 // --- Methods ---
 
 // 1. 狀態切換 (Active <-> Disabled)
-// 【修正重點】傳送 Current State (當前狀態) 給後端
 const handleToggleState = async (row: KeyData) => {
   if (updatingStateMap.value[row.key_id]) return;
 
-  // 取得當前狀態 (例如 'Active')
   const currentState = row.key_state;
-  // 決定操作文字 (若當前是 Active，表示我要執行 '停用')
   const actionText = currentState === 'Active' ? '停用' : '啟用';
 
   try {
@@ -202,23 +232,18 @@ const handleToggleState = async (row: KeyData) => {
     const res = await axios.post('http://localhost:8000/keys/update_state', 
       {
         key_id: row.key_id,
-        key_state: currentState // 【修正】回傳當前的狀態 (API 要求的)
+        key_state: currentState 
       },
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        ElMessage.success(`金鑰已${actionText}`);
-       
-       // 【重要】前端手動更新為「相反」狀態，確保畫面即時變更
-       // 如果原本是 Active -> 變成 Disabled
        row.key_state = currentState === 'Active' ? 'Disabled' : 'Active';
-       
-       // 背景重新拉取確認
        await fetchKeys(); 
     } else {
        ElMessage.error(res.data?.message || `無法${actionText}金鑰`);
-       await fetchKeys(); // 失敗時重拉以還原
+       await fetchKeys(); 
     }
   } catch (e) {
     console.error(e);
@@ -344,6 +369,7 @@ const formatDate = (dateString: string | null | undefined): string => {
     catch (e) { return '-'; }
 };
 
+// --- Lifecycle & Watchers ---
 onMounted(async () => {
   await fetchKeys();
   await fetchCurrentUserProjectRole();
@@ -392,6 +418,17 @@ watch(() => auth.currentSelectedCodename, async () => {
             >
               新增母Key
             </el-button>
+
+            <!-- 【新增】更新資料按鈕 -->
+            <el-button 
+              type="success" 
+              :icon="Refresh" 
+              :loading="isUpdating"
+              @click="handleUpdateData"
+              style="margin-left: 10px;"
+            >
+              更新資料
+            </el-button>
           </div>
         </div>
       </template>
@@ -414,7 +451,7 @@ watch(() => auth.currentSelectedCodename, async () => {
             </template>
           </el-table-column>
 
-          <el-table-column prop="key_id" label="金鑰 ID" min-width="400" />
+          <el-table-column prop="key_id" label="金鑰 ID" min-width="450" />
           
           <el-table-column prop="key_type" label="類型" width="100" align="center">
              <template #default="scope">
@@ -446,7 +483,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_description" label="描述" min-width="200" show-overflow-tooltip />
 
-          <el-table-column label="操作" width="230" align="center"> 
+          <el-table-column label="操作" width="200" align="center"> 
             <template #default="scope">
               <div class="action-buttons">
                 
@@ -475,15 +512,17 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </div>
                 <span v-else style="margin-right: 5px; color: #ccc;">-</span>
 
+                <!-- 2. 新增子 Key (僅 Parent 顯示，且需有權限) -->
                 <el-button
-                  v-if="scope.row.key_type === 'Parent' && scope.row.key_state === 'Active' && canManageKeys"
+                  v-if="scope.row.key_type === 'Parent' && canManageKeys"
                   size="small"
-                  type="primary"
+                  type="success"
                   @click="handleAddChildKey(scope.row)"
                 >
                   新增金鑰
                 </el-button>
 
+                <!-- 3. 刪除 Key (僅 Child 且有權限者顯示) -->
                 <el-button
                   v-if="scope.row.key_type === 'Child' && scope.row.key_state === 'Disabled' && canManageKeys"
                   size="small"
@@ -500,34 +539,23 @@ watch(() => auth.currentSelectedCodename, async () => {
       </div>
     </el-card>
 
+    <!-- 新增金鑰 Modal -->
     <el-dialog
       v-model="addKeyDialogVisible"
       :title="addKeyForm.key_type === 'Parent' ? '新增母金鑰' : '新增子金鑰'"
       width="500px"
       append-to-body
-      destroy-on-close
     >
       <el-form :model="addKeyForm" label-position="top">
         
         <el-form-item label="專案代號" required>
-          <el-select 
-            v-model="addKeyForm.codename" 
-            placeholder="請選擇或搜尋專案" 
-            style="width: 100%" 
-            :disabled="addKeyForm.key_type === 'Child'"
-            filterable 
-          >
+          <el-select v-model="addKeyForm.codename" placeholder="請選擇專案" style="width: 100%" :disabled="addKeyForm.key_type === 'Child'">
             <el-option v-for="code in projectOptions" :key="code" :label="code" :value="code" />
           </el-select>
         </el-form-item>
 
         <el-form-item label="雲平台類型" required>
-          <el-select 
-            v-model="addKeyForm.cloud_type" 
-            placeholder="請選擇雲平台" 
-            style="width: 100%" 
-            :disabled="addKeyForm.key_type === 'Child'"
-          >
+          <el-select v-model="addKeyForm.cloud_type" placeholder="請選擇雲平台" style="width: 100%" :disabled="addKeyForm.key_type === 'Child'">
             <el-option label="AWS" value="AWS" />
             <el-option label="GCP" value="GCP" />
           </el-select>
@@ -554,13 +582,8 @@ watch(() => auth.currentSelectedCodename, async () => {
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="addKeyDialogVisible = false">取消</el-button>
-          <el-button 
-            type="primary" 
-            :loading="isSubmittingKey" 
-            :disabled="!isFormValid"
-            @click="submitAddKey"
-          >
-            確定新增金鑰
+          <el-button type="primary" :loading="isSubmittingKey" @click="submitAddKey">
+            確定新增
           </el-button>
         </span>
       </template>
@@ -599,12 +622,11 @@ watch(() => auth.currentSelectedCodename, async () => {
   overflow-x: auto; 
 }
 
-/* 確保按鈕排列整齊，靠左排列，避免按鈕寬度不一造成抖動 */
+/* 確保按鈕排列整齊 */
 .action-buttons {
   display: flex;
   justify-content: center;
-  align-items: center;
-  gap: 8px;
+  gap: 5px;
 }
 
 /* 確保表格內容不換行，保持整齊 */
