@@ -514,7 +514,7 @@ watch(() => auth.currentSelectedCodename, async () => {
 
                 <!-- 2. 新增子 Key (僅 Parent 顯示，且需有權限) -->
                 <el-button
-                  v-if="scope.row.key_type === 'Parent' && canManageKeys"
+                  v-if="scope.row.key_type === 'Parent' && canManageKeys && scope.row.key_state === 'Active'"
                   size="small"
                   type="success"
                   @click="handleAddChildKey(scope.row)"

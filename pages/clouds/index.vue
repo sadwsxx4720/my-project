@@ -235,7 +235,7 @@ onMounted(async () => {
       <div class="table-container">
         <el-table v-loading="loading" :data="filteredData" style="width: 100%" border stripe>
           
-          <el-table-column prop="cloud_type" label="雲平台類型" width="120" sortable />
+          <el-table-column prop="cloud_type" label="雲平台類型" min-width="120" sortable />
           <el-table-column prop="cloud_account_id" label="雲平台ID" width="200" show-overflow-tooltip />
           
           <!-- 專案代號 (Array Display) -->
@@ -245,17 +245,17 @@ onMounted(async () => {
              </template>
           </el-table-column>
 
-          <el-table-column prop="user_account" label="平台使用者帳號" width="200" show-overflow-tooltip />
+          <el-table-column prop="user_account" label="平台使用者帳號" min-width="200" show-overflow-tooltip />
           
-          <el-table-column prop="user_create_time" label="帳號創建時間" width="180" sortable>
+          <el-table-column prop="user_create_time" label="帳號創建時間" min-width="180" sortable>
              <template #default="scope">{{ formatDate(scope.row.user_create_time) }}</template>
           </el-table-column>
           
-          <el-table-column label="帳號權限" width="200" show-overflow-tooltip>
+          <el-table-column label="帳號權限" min-width="200" show-overflow-tooltip>
              <template #default="scope">{{ (scope.row.user_permission || []).join(', ') }}</template>
           </el-table-column>
           
-          <el-table-column prop="user_MFA_enabled" label="MFA啟用" width="100" align="center">
+          <el-table-column prop="user_MFA_enabled" label="MFA啟用" min-width="100" align="center">
              <template #default="scope">
                  <el-tag v-if="scope.row.user_MFA_enabled === true" type="success">是</el-tag>
                  <el-tag v-else-if="scope.row.user_MFA_enabled === false" type="danger">否</el-tag>
@@ -263,12 +263,12 @@ onMounted(async () => {
              </template>
           </el-table-column>
           
-           <el-table-column prop="user_change_password_previous_time" label="前次密碼變更" width="180">
+           <el-table-column prop="user_change_password_previous_time" label="前次密碼變更" min-width="180">
               <template #default="scope">{{ formatDate(scope.row.user_change_password_previous_time) }}</template>
            </el-table-column>
            
            <!-- 金鑰 ID (Nested Array Display) -->
-          <el-table-column label="金鑰ID" width="350">
+          <el-table-column label="金鑰ID" min-width="350">
              <template #default="scope">
                 <div v-if="scope.row.keys && scope.row.keys.length > 0">
                     <div v-for="(key, index) in scope.row.keys" :key="index" class="key-id-item">
@@ -280,7 +280,7 @@ onMounted(async () => {
           </el-table-column>
 
           <!-- 操作欄位 (移除 fixed) -->
-          <el-table-column label="操作" width="120" align="center"> 
+          <el-table-column label="操作" min-width="120" align="center"> 
             <template #default="scope">
               <el-button
                 size="small"

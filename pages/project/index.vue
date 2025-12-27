@@ -232,14 +232,19 @@
         <div class="role-section">
            <div class="step-header">
               <span class="role-label-tag admin-tag">新增 Admin</span>
-              <el-input 
-                v-model="searchAddAdminQuery" 
-                placeholder="搜尋使用者..." 
-                prefix-icon="Search" 
-                size="small"
-                style="width: 200px;"
-                clearable 
-              />
+              <div class="step-header-actions">
+                <el-tag type="danger" effect="plain" class="count-tag">
+                  已選取: {{ selectedAdminsToAdd.length }} 人
+                </el-tag>
+                <el-input 
+                  v-model="searchAddAdminQuery" 
+                  placeholder="搜尋使用者..." 
+                  prefix-icon="Search" 
+                  size="small"
+                  style="width: 200px;"
+                  clearable 
+                />
+              </div>
            </div>
            <el-table 
              :data="filteredUsersForAdmin" 
@@ -260,14 +265,19 @@
         <div class="role-section">
            <div class="step-header">
               <span class="role-label-tag viewer-tag">新增 Viewer</span>
-              <el-input 
-                v-model="searchAddViewerQuery" 
-                placeholder="搜尋使用者..." 
-                prefix-icon="Search" 
-                size="small"
-                style="width: 200px;"
-                clearable 
-              />
+                <div class="step-header-actions">
+                  <el-tag type="info" effect="plain" class="count-tag">
+                    已選取: {{ selectedViewersToAdd.length }} 人
+                  </el-tag>
+                  <el-input 
+                    v-model="searchAddViewerQuery" 
+                    placeholder="搜尋使用者..." 
+                    prefix-icon="Search" 
+                    size="small"
+                    style="width: 200px;"
+                    clearable 
+                  />
+              </div>
            </div>
            <el-table 
              :data="filteredUsersForViewer" 
