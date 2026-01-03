@@ -1,7 +1,11 @@
 <template>
   <div class="project-management-container">
     
+    <!-- ========================================== -->
+    <!-- 模式 A: 專案列表 (List View) -->
+    <!-- ========================================== -->
     <div v-if="viewMode === 'list'">
+      <!-- 1. 頂部區塊：標題與搜尋 -->
       <div class="page-header">
         <h2 class="page-title">專案列表</h2>
         <div class="header-actions">
@@ -19,12 +23,15 @@
         </div>
       </div>
 
+      <!-- 2. 專案列表表格 -->
       <el-card shadow="never" class="table-card" v-loading="loadingProjects">
         <el-table :data="filteredProjects" style="width: 100%" stripe>
+          <!-- 專案 ID -->
           <el-table-column prop="projectid" label="專案 ID" width="400" sortable />
           <el-table-column prop="projectname" label="專案名稱" sortable />
           <el-table-column prop="codename" label="專案代號" sortable />
           
+          <!-- 操作 -->
           <el-table-column label="操作" width="350" align="center">
             <template #default="scope">
               <div class="action-buttons">
@@ -50,8 +57,12 @@
       </el-card>
     </div>
 
+    <!-- ========================================== -->
+    <!-- 模式 B: 專案詳細資訊 (Details View) -->
+    <!-- ========================================== -->
     <div v-else-if="viewMode === 'details' && currentProject" class="details-view">
       
+      <!-- 詳細資訊 Header (包含返回按鈕) -->
       <div class="page-header details-header-bar">
         <div class="left-section">
           <el-button link @click="backToList" class="back-btn">
@@ -73,10 +84,13 @@
         </div>
       </div>
 
+      <!-- 成員列表表格 -->
       <el-card shadow="never" class="table-card" v-loading="loadingDetails">
         <el-table :data="currentProject.projectinfo" style="width: 100%" border>
+          <!-- 加入 sortable 屬性 -->
           <el-table-column prop="username" label="使用者名稱" sortable />
           
+          <!-- 加入 prop="projectrole" 與 sortable 屬性以支援排序 -->
           <el-table-column prop="projectrole" label="該專案權限" width="200" align="center" sortable>
             <template #default="scope">
               <el-tag :type="scope.row.projectrole === 'admin' ? 'danger' : 'info'">
@@ -85,9 +99,11 @@
             </template>
           </el-table-column>
 
+          <!-- 操作欄位置中 -->
           <el-table-column label="操作" width="300" align="center">
             <template #default="scope">
               <div class="action-buttons">
+                <!-- Change Role -->
                 <el-button 
                   size="small" 
                   :type="scope.row.projectrole === 'admin' ? 'warning' : 'primary'" 
@@ -98,6 +114,7 @@
                   轉為 {{ scope.row.projectrole === 'admin' ? 'Viewer' : 'Admin' }}
                 </el-button>
                 
+                <!-- Remove User -->
                 <el-button 
                   size="small" 
                   type="danger" 
@@ -114,6 +131,9 @@
       </el-card>
     </div>
 
+    <!-- ========================================== -->
+    <!-- Modal 1: 新增專案精靈 (Wizard) -->
+    <!-- ========================================== -->
     <el-dialog
       v-model="addProjectVisible"
       title="新增專案"
@@ -128,6 +148,7 @@
         <el-step title="新增 Viewer" />
       </el-steps>
 
+      <!-- 步驟 1: 輸入基本資訊 -->
       <div v-show="activeStep === 0" class="step-content">
         <el-form :model="newProjectForm" label-position="top">
           <el-form-item label="輸入名稱" required>
@@ -142,6 +163,7 @@
         </el-form>
       </div>
 
+      <!-- 步驟 2: 新增 Admin -->
       <div v-show="activeStep === 1" class="step-content" v-loading="loadingUsers">
         <div class="step-header">
           <p class="step-desc">請勾選此專案的管理者 (Admin)</p>
@@ -172,6 +194,7 @@
         </el-table>
       </div>
 
+      <!-- 步驟 3: 新增 Viewer -->
       <div v-show="activeStep === 2" class="step-content">
         <div class="step-header">
           <p class="step-desc">請勾選此專案的檢視者 (Viewer)</p>
@@ -220,6 +243,9 @@
       </template>
     </el-dialog>
 
+    <!-- ========================================== -->
+    <!-- Modal 2: 新增權限 (Admin & Viewer 同時選擇) -->
+    <!-- ========================================== -->
     <el-dialog
       v-model="addMemberVisible"
       title="新增權限 (Admin & Viewer)"
@@ -438,7 +464,23 @@ const fetchUsers = async () => {
   }
 };
 
+const updateUserApi = async (user: ApiUser, newCodenames: string[]) => {
+  const token = localStorage.getItem('auth_token');
+  if (!token) throw new Error('未登入');
 
+  const payload = {
+    username: user.username,
+    password: user.password || '',
+    role: user.role,
+    email: user.email,
+    codename: newCodenames, 
+    projects: newCodenames.map(code => ({ codename: code })) 
+  };
+
+  return await axios.post('http://localhost:8000/users/update', payload, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+};
 
 const updateProjectApi = async (projectCodename: string, newProjectInfo: ProjectInfo[]) => {
   const token = localStorage.getItem('auth_token');
@@ -479,14 +521,16 @@ const deleteProject = async (project: Project) => {
       const updatePromises = usersToUpdate.map(user => {
         const currentCodenames = user.projects ? user.projects.map(p => p.codename) : [];
         const newCodenames = currentCodenames.filter(c => c !== projectCode);
+        return updateUserApi(user, newCodenames);
       });
 
       await Promise.all(updatePromises);
 
       // 4. 刪除專案
+      // 【修正】使用 data 傳遞 JSON Body
       await axios.delete('http://localhost:8000/projects/delete', {
         headers: { Authorization: `Bearer ${token}` },
-        params: { projectid: project.projectid } 
+        data: { codename: project.codename } // 格式: { "codename": "string" }
       });
 
       ElMessage.success('專案已刪除並更新相關使用者資料');
@@ -505,7 +549,6 @@ const deleteProject = async (project: Project) => {
 // --- Add Project Wizard State ---
 const addProjectVisible = ref(false);
 const activeStep = ref(0);
-// 【修改需求】Form 加入 mainKey 欄位
 const newProjectForm = reactive({ projectname: '', codename: '', mainKey: '' });
 const selectedAdmins = ref<ApiUser[]>([]);
 const selectedViewers = ref<ApiUser[]>([]);
@@ -569,7 +612,6 @@ const prevStep = () => {
   activeStep.value--;
 };
 
-// 【修改需求】調整 finishAddProject 的 API Payload 格式
 const finishAddProject = async () => {
   submittingProject.value = true;
   try {
@@ -583,18 +625,12 @@ const finishAddProject = async () => {
       ...selectedViewers.value.map(u => ({ username: u.username, projectrole: 'viewer' }))
     ];
 
-    // 處理 Main Keys：如果有填寫則放入陣列，否則傳空陣列
-    const mainKeysPayload = newProjectForm.mainKey 
-      ? [{ key_id: newProjectForm.mainKey }] 
-      : [];
-
     const projectPayload = {
       projectname: newProjectForm.projectname,
       codename: projectCode,
       rotation: 0, 
       mailreceivers: [], 
-      projectinfo: projectinfoPayload,
-      mainkeys: mainKeysPayload // 新增的欄位
+      projectinfo: projectinfoPayload
     };
 
     const res = await axios.post('http://localhost:8000/projects/', projectPayload, {
@@ -610,6 +646,8 @@ const finishAddProject = async () => {
         const newCodenames = currentCodenames.includes(projectCode) 
           ? currentCodenames 
           : [...currentCodenames, projectCode];
+
+        return updateUserApi(user, newCodenames);
       });
 
       await Promise.all(updatePromises);
@@ -633,7 +671,7 @@ const finishAddProject = async () => {
 
 // 切換到詳細頁面
 const switchToDetailsView = async (project: Project) => {
-  loadingProjects.value = true; 
+  loadingProjects.value = true; // 在列表顯示 loading
   try {
     await fetchProjects();
     const updatedProject = projects.value.find(p => p.projectid === project.projectid);
@@ -736,10 +774,22 @@ const confirmAddMembers = async () => {
     // 4. 呼叫 projects/update_member
     await updateProjectApi(projectCode, updatedProjectInfo);
 
+    // 5. 更新使用者 (Users API) - 為每個被選中的使用者添加此專案
+    const allSelectedUsers = [...selectedAdminsToAdd.value, ...selectedViewersToAdd.value];
+    const updatePromises = allSelectedUsers.map(user => {
+      const currentCodenames = user.projects ? user.projects.map(p => p.codename) : [];
+      if (!currentCodenames.includes(projectCode)) {
+        currentCodenames.push(projectCode);
+      }
+      return updateUserApi(user, currentCodenames);
+    });
+    
+    await Promise.all(updatePromises);
+
     ElMessage.success('新增成員成功');
     addMemberVisible.value = false;
     
-    // 5. 重新抓取資料
+    // 6. 重新抓取資料
     await switchToDetailsView(currentProject.value);
 
   } catch (err: any) {
@@ -795,6 +845,14 @@ const removeMember = async (member: ProjectInfo) => {
         }));
 
       await updateProjectApi(currentProject.value.codename, updatedProjectInfo);
+
+      // 同步更新 Users 資料表，移除該專案代號
+      const targetUser = allApiUsers.value.find(u => u.username === member.username);
+      if (targetUser) {
+         const currentCodenames = targetUser.projects ? targetUser.projects.map(p => p.codename) : [];
+         const newCodenames = currentCodenames.filter(c => c !== currentProject.value?.codename);
+         await updateUserApi(targetUser, newCodenames);
+      }
 
       ElMessage.success('移除成員成功');
       await switchToDetailsView(currentProject.value);
