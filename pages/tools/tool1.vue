@@ -344,8 +344,7 @@ const handleDeleteKey = async (row: KeyData) => {
       };
     }
 
-    const res = await axios.delete(url, { 
-      data: payload,
+    const res = await axios.post(url, payload, { 
       headers: { Authorization: `Bearer ${token}` } 
     });
     

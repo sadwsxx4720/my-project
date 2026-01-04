@@ -108,6 +108,12 @@ const handleUpdateData = async () => {
   }
 }
 
+// 【新增】新增雲平台按鈕事件 (目前僅預留)
+const handleAddCloudPlatform = () => {
+  console.log('點擊新增雲平台');
+  // 這裡可以寫開啟 Modal 或跳轉頁面的邏輯
+}
+
 // --- Computed Properties ---
 
 // 自動獲取可用的 Cloud Types (AWS, GCP...)
@@ -115,6 +121,7 @@ const availableCloudTypes = computed(() => {
     const types = new Set(cloudServices.value.map(service => service.cloud_type).filter(Boolean));
     return ['all', ...Array.from(types)];
 });
+
 
 // 過濾邏輯
 const filteredData = computed(() => {
@@ -217,6 +224,16 @@ onMounted(async () => {
               style="width: 250px; margin-right: 10px;" 
               clearable
             /> 
+
+            <!-- 新增雲平台按鈕 -->
+            <el-button 
+              type="primary" 
+              size="small" 
+              style="margin-right: 10px;"
+              @click="handleAddCloudPlatform"
+            >
+              新增雲平台
+            </el-button>
             
             <!-- 更新資料按鈕 -->
             <el-button 
