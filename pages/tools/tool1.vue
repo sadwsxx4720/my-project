@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh } from '@element-plus/icons-vue'
+import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh, Download } from '@element-plus/icons-vue' // 加入 Download icon
 
 definePageMeta({
   layout: 'default'
@@ -44,7 +44,6 @@ const addKeyForm = reactive({
   cloud_type: '', 
   account: '',    // username or service_account_email
   key_type: '',   // 預設為空，讓使用者選擇
-  // 【修改】已移除 parent_key_id
 })
 
 // --- Computed: 表單驗證 ---
@@ -247,17 +246,16 @@ const handleToggleState = async (row: KeyData) => {
   }
 }
 
-// 【修改】開啟新增金鑰 Modal (綁定在列表按鈕)
+// 開啟新增金鑰 Modal
 const handleOpenAddKeyDialog = (row: KeyData) => {
   addKeyForm.codename = row.codename;
   addKeyForm.cloud_type = row.cloud_type;
-  // 【修改】移除 parent_key_id 的賦值
   addKeyForm.account = '';
-  addKeyForm.key_type = 'Child'; // 預設選中 Child，但使用者可以改
+  addKeyForm.key_type = 'Child'; 
   addKeyDialogVisible.value = true;
 }
 
-// 【修改】送出新增金鑰
+// 【修改】送出新增金鑰並處理檔案下載
 const submitAddKey = async () => {
   if (!isFormValid.value) {
     ElMessage.warning('請填寫完整資訊');
@@ -271,7 +269,6 @@ const submitAddKey = async () => {
     let url = '';
     let payload = {};
 
-    // 根據需求組裝 Payload (【修改】移除 parent_key_id)
     if (addKeyForm.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/create';
       payload = {
@@ -288,21 +285,64 @@ const submitAddKey = async () => {
       };
     }
 
+    // 【修改】重點：設定 responseType 為 blob 以接收檔案流
     const res = await axios.post(url, payload, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      responseType: 'blob' 
     });
 
-    if (res.data && (res.data.code === 0 || res.data.code === 200)) {
-      ElMessage.success('金鑰新增成功');
+    // 判斷回應狀態，若為 200 則代表成功且回傳了檔案
+    if (res.status === 200) {
+      // 1. 建立 Blob 物件
+      const blob = new Blob([res.data], { type: 'application/json' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      
+      // 2. 嘗試從 Header 取得檔名 (如果有 Content-Disposition)
+      let filename = 'credentials.json';
+      const contentDisposition = res.headers['content-disposition'];
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch && filenameMatch.length === 2) {
+          filename = filenameMatch[1];
+        }
+      }
+
+      // 3. 建立虛擬連結並觸發下載
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      
+      // 4. 清理
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+
+      ElMessage.success('金鑰新增成功，正在下載憑證檔案...');
       addKeyDialogVisible.value = false;
       await fetchKeys();
     } else {
-      ElMessage.error(res.data?.message || '新增失敗');
+      // 如果 status 不是 200，嘗試讀取 blob 內容顯示錯誤 (雖然通常 axios 會 catch error)
+      ElMessage.error('新增失敗');
     }
 
   } catch (err: any) {
     console.error(err);
-    ElMessage.error('新增金鑰發生錯誤');
+    // 【修改】錯誤處理：因為 responseType 是 blob，錯誤訊息也在 blob 裡，需要轉回文字
+    if (err.response && err.response.data instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const errorData = JSON.parse(reader.result as string);
+                ElMessage.error(errorData.detail || errorData.message || '新增金鑰失敗');
+            } catch (e) {
+                ElMessage.error('新增金鑰發生未預期的錯誤');
+            }
+        };
+        reader.readAsText(err.response.data);
+    } else {
+        ElMessage.error('新增金鑰發生錯誤');
+    }
   } finally {
     isSubmittingKey.value = false;
   }
@@ -524,6 +564,7 @@ watch(() => auth.currentSelectedCodename, async () => {
       title="新增金鑰"
       width="650px"
       append-to-body
+      :close-on-click-modal="false"
     >
       <el-form :model="addKeyForm" label-position="top">
         
@@ -559,12 +600,17 @@ watch(() => auth.currentSelectedCodename, async () => {
         </el-form-item>
 
       </el-form>
-
+      
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="addKeyDialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="isSubmittingKey" @click="submitAddKey">
-            確定新增金鑰
+          <el-button 
+            type="primary" 
+            :loading="isSubmittingKey" 
+            @click="submitAddKey"
+            :icon="Download"
+          >
+            確定新增並下載憑證
           </el-button>
         </span>
       </template>
