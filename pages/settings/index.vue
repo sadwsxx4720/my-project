@@ -166,7 +166,7 @@
         <el-tab-pane class="tab-pane-content" v-if="auth.isSuperuser">
           <template #label>
             <el-icon><Message /></el-icon>
-            <span>信件設定</span>
+            <span>Mail設定</span>
           </template>
           
           <div class="mail-settings-container">
@@ -206,6 +206,55 @@
                  <div class="form-btn-item">
                    <el-button type="primary" size="large" class="save-btn" @click="saveMailSettings">
                      儲存設定
+                   </el-button>
+                 </div>
+               </el-form>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane class="tab-pane-content" v-if="auth.isSuperuser">
+          <template #label>
+            <el-icon><ChatLineRound /></el-icon>
+            <span>Telegram 設定</span>
+          </template>
+          
+          <div class="mail-settings-container">
+            <div class="mail-form-wrapper" v-loading="loadingTelegramSettings">
+               
+               <div style="text-align: center; margin-bottom: 20px;">
+                 <el-alert 
+                    title="請輸入 Telegram Bot 相關資訊以啟用通知功能" 
+                    type="info" 
+                    center
+                    :closable="false" 
+                    show-icon 
+                    style="max-width: 600px; margin: 0 auto;"
+                  />
+               </div>
+
+               <el-form :model="telegramForm" label-position="top" class="mail-form">
+                 <el-form-item label="Bot Token">
+                   <el-input 
+                     v-model="telegramForm.token" 
+                     placeholder="請輸入 Telegram Bot Token" 
+                     size="large" 
+                     show-password
+                   />
+                 </el-form-item>
+
+                 <el-form-item label="Chat ID">
+                   <el-input 
+                     v-model="telegramForm.chat_id" 
+                     placeholder="請輸入 Chat ID (例如: -123456789)" 
+                     size="large" 
+                     type="number"
+                   />
+                 </el-form-item>
+
+                 <div class="form-btn-item">
+                   <el-button type="primary" size="large" class="save-btn" @click="saveTelegramSettings">
+                     確認送出
                    </el-button>
                  </div>
                </el-form>
@@ -332,7 +381,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import axios from 'axios'
 import { ElMessage, ElTable, type FormInstance, type FormRules } from 'element-plus'
-import { Bell, Message, Check, Timer, Search } from '@element-plus/icons-vue'
+import { Bell, Message, Check, Timer, Search, ChatLineRound } from '@element-plus/icons-vue' // 新增 ChatLineRound Icon
 
 definePageMeta({
   layout: 'default'
@@ -353,6 +402,13 @@ const mailForm = ref({
   content: ''
 })
 
+// --- Telegram Settings State ---
+const loadingTelegramSettings = ref(false)
+const telegramForm = ref({
+  token: '',
+  chat_id: '' // 使用字串綁定 input，送出時轉數字
+})
+
 // --- Project Members State ---
 const loadingMembers = ref(false)
 const projectInfo = ref<any[]>([]) 
@@ -360,7 +416,7 @@ const allUsers = ref<any[]>([])
 const currentProjectRole = ref<string>('') 
 const selectedMembers = ref<any[]>([]) 
 const userFilter = ref('all') 
-const roleFilter = ref('all')  // 新增：角色篩選狀態
+const roleFilter = ref('all') 
 const searchQuery = ref('')    
 
 const mailReceivers = ref<string[]>([])
@@ -384,7 +440,7 @@ const canEdit = computed(() => {
   return auth.isSuperuser || currentProjectRole.value === 'admin'
 })
 
-// 篩選使用者下拉選單，只保留 username
+// 篩選使用者下拉選單
 const filterUserOptions = computed(() => {
   return combinedList.value.map(m => ({
     label: m.username || m.email,
@@ -392,11 +448,11 @@ const filterUserOptions = computed(() => {
   }))
 })
 
-// 修改：篩選後顯示的列表 (包含 Search, UserFilter, RoleFilter)
+// 篩選後顯示的列表
 const displayedMembers = computed(() => {
   let members = combinedList.value
 
-  // 1. 搜尋過濾 (同時搜尋 名稱、Email、角色)
+  // 1. 搜尋過濾
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     members = members.filter(m => 
@@ -411,7 +467,7 @@ const displayedMembers = computed(() => {
     members = members.filter(m => m.email === userFilter.value)
   }
 
-  // 3. 新增：角色下拉選單過濾
+  // 3. 角色下拉選單過濾
   if (roleFilter.value && roleFilter.value !== 'all') {
     members = members.filter(m => m.projectrole === roleFilter.value)
   }
@@ -624,6 +680,52 @@ const fetchMailSettings = async () => {
   }
 }
 
+// ------------------------------------
+// Telegram Settings API Logic
+// ------------------------------------
+const fetchTelegramSettings = async () => {
+  loadingTelegramSettings.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await axios.get('http://localhost:8000/telegram_sender/get', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
+      const data = res.data.data
+      telegramForm.value = {
+        token: data.token || '',
+        chat_id: data.chat_id !== undefined ? data.chat_id : ''
+      }
+    }
+  } catch (error) {
+    console.error('Fetch telegram settings error', error)
+    ElMessage.error('獲取 Telegram 設定失敗')
+  } finally {
+    loadingTelegramSettings.value = false
+  }
+}
+
+const saveTelegramSettings = async () => {
+  try {
+    const token = localStorage.getItem('auth_token')
+    // 將 chat_id 轉換為數字格式
+    const payload = {
+      token: telegramForm.value.token,
+      chat_id: Number(telegramForm.value.chat_id)
+    }
+
+    await axios.post('http://localhost:8000/telegram_sender/update', payload, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    ElMessage.success('Telegram 設定已儲存')
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('儲存 Telegram 設定失敗')
+  }
+}
+
 const saveNotificationMembers = async () => {
   const mailReceiverPayload = selectedMembers.value
     .map(m => m.email)
@@ -685,12 +787,15 @@ watch(currentCodename, (newCode) => {
     fetchProjectMembers(newCode)
     searchQuery.value = ''
     userFilter.value = 'all'
-    roleFilter.value = 'all' // 專案變更時重置角色篩選
+    roleFilter.value = 'all' 
   }
 }, { immediate: true })
 
 onMounted(() => {
-  if (auth.isSuperuser) fetchMailSettings()
+  if (auth.isSuperuser) {
+    fetchMailSettings()
+    fetchTelegramSettings() // 新增：讀取 Telegram 設定
+  }
 })
 
 </script>

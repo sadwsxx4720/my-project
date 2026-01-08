@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Refresh } from '@element-plus/icons-vue' // 引入 Refresh icon
+import { Refresh, Plus } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'default'
@@ -13,7 +13,7 @@ definePageMeta({
 const router = useRouter()
 const auth = useAuthStore()
 
-// --- 資料介面定義 (根據 clouds/get_all 格式) ---
+// --- 資料介面定義 ---
 interface CloudProject {
   codename: string;
 }
@@ -36,15 +36,37 @@ interface CloudService {
 }
 
 // --- State ---
-const cloudServices = ref<CloudService[]>([]) // 儲存 API 回傳的資料
+const cloudServices = ref<CloudService[]>([]) 
 const loading = ref(false)
-const isUpdating = ref(false) // 控制更新按鈕的 loading 狀態
-const selectedCloudType = ref('all') // 雲平台篩選
-const searchQuery = ref('') // 關鍵字搜尋
+const isUpdating = ref(false) 
+const selectedCloudType = ref('all') 
+const searchQuery = ref('') 
+
+// --- 新增雲平台彈窗相關 State ---
+const dialogVisible = ref(false)
+const ruleFormRef = ref<FormInstance>()
+const addForm = reactive({
+  cloud_type: 'AWS',
+  other_type_name: '', // 儲存「其他」平台的名稱
+  account_name: '',
+  access_key: '',
+  secret_key: '',
+  description: '',
+  project_codename: ''
+})
+
+// 表單驗證規則
+const rules = reactive<FormRules>({
+  cloud_type: [{ required: true, message: '請選擇雲平台類型', trigger: 'change' }],
+  other_type_name: [{ required: true, message: '請輸入平台名稱', trigger: 'blur' }],
+  account_name: [{ required: true, message: '請輸入帳號名稱', trigger: 'blur' }],
+  access_key: [{ required: true, message: '請輸入 Access Key 或憑證內容', trigger: 'blur' }],
+  secret_key: [{ required: true, message: '請輸入 Secret Key', trigger: 'blur' }],
+  project_codename: [{ required: true, message: '請選擇所屬專案', trigger: 'change' }]
+})
 
 // --- API Functions ---
 
-// 1. 獲取雲服務列表
 const fetchCloudServices = async () => {
   try {
     loading.value = true
@@ -55,12 +77,10 @@ const fetchCloudServices = async () => {
       return
     }
 
-    // 打 clouds/get_all API
     const res = await axios.get('http://localhost:8000/clouds/get_all', {
       headers: { Authorization: `Bearer ${savedToken}` }
     })
 
-    // 根據提供的 JSON，code 為 200
     if (res.data && res.data.code === 200 && Array.isArray(res.data.data)) {
       cloudServices.value = res.data.data
     } else {
@@ -76,7 +96,6 @@ const fetchCloudServices = async () => {
   }
 }
 
-// 2. 手動觸發更新資料 (打 summary API)
 const handleUpdateData = async () => {
   try {
     isUpdating.value = true
@@ -89,15 +108,12 @@ const handleUpdateData = async () => {
 
     const headers = { Authorization: `Bearer ${savedToken}` }
 
-    // 同時呼叫 AWS 和 GCP 的 summary API
     await Promise.allSettled([
       axios.get('http://localhost:8000/cloud_platform/aws/iam/summary', { headers }),
       axios.get('http://localhost:8000/cloud_platform/gcp/iam/summary', { headers })
     ])
     
     ElMessage.success('已完成資料更新請求，正在重新整理列表...')
-
-    // 無論成功與否，重新獲取列表以顯示最新狀態
     await fetchCloudServices()
 
   } catch (err) {
@@ -108,22 +124,33 @@ const handleUpdateData = async () => {
   }
 }
 
-// 【新增】新增雲平台按鈕事件 (目前僅預留)
+// 點擊新增雲平台按鈕
 const handleAddCloudPlatform = () => {
-  console.log('點擊新增雲平台');
-  // 這裡可以寫開啟 Modal 或跳轉頁面的邏輯
+  dialogVisible.value = true
+}
+
+// 提交新增表單
+const submitForm = async (formEl: FormInstance | undefined) => {
+  if (!formEl) return
+  await formEl.validate((valid) => {
+    if (valid) {
+      console.log('提交的新增資料:', addForm)
+      ElMessage.success(`新增 ${addForm.cloud_type === 'Other' ? addForm.other_type_name : addForm.cloud_type} 成功（模擬）`)
+      dialogVisible.value = false
+      formEl.resetFields()
+    } else {
+      console.log('驗證失敗')
+    }
+  })
 }
 
 // --- Computed Properties ---
 
-// 自動獲取可用的 Cloud Types (AWS, GCP...)
 const availableCloudTypes = computed(() => {
     const types = new Set(cloudServices.value.map(service => service.cloud_type).filter(Boolean));
     return ['all', ...Array.from(types)];
 });
 
-
-// 過濾邏輯
 const filteredData = computed(() => {
   const currentCode = auth.currentSelectedCodename;
   const allowedUserCodes = auth.availableCodename;
@@ -134,29 +161,24 @@ const filteredData = computed(() => {
   const query = searchQuery.value.toLowerCase();
 
   return cloudServices.value.filter(service => {
-    // 1. 專案代號篩選 (Codename Filter)
     const serviceCodenames = service.projects ? service.projects.map(p => p.codename) : [];
     
     let codenameMatch = false;
     if (currentCode === 'all') {
-         // 顯示使用者有權限的所有專案 (交集檢查)
          if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
              return false;
          }
          codenameMatch = serviceCodenames.some(code => allowedUserCodes.includes(code));
     } else {
-        // 顯示特定專案
         codenameMatch = serviceCodenames.includes(currentCode);
     }
     
     if (!codenameMatch) return false;
 
-    // 2. 雲平台類型篩選 (Cloud Type Filter)
     if (selectedCloudType.value !== 'all' && service.cloud_type !== selectedCloudType.value) {
         return false;
     }
 
-    // 3. 關鍵字搜尋 (Search Query)
     if (query) {
         const inCloudId = service.cloud_account_id?.toLowerCase().includes(query);
         const inUserAccount = service.user_account?.toLowerCase().includes(query);
@@ -171,7 +193,6 @@ const filteredData = computed(() => {
 
 // --- Methods ---
 
-// 點擊查看詳細 (跳轉並帶入 key_ids)
 const handleViewDetail = (row: CloudService) => {
   const keyIdsArray = row.keys ? row.keys.map(k => k.key_id) : [];
   if (keyIdsArray.length > 0) {
@@ -187,7 +208,6 @@ const formatDate = (dateString: string | null | undefined): string => {
     catch (e) { return 'Invalid Date'; }
 };
 
-// --- Lifecycle ---
 onMounted(async () => {
   await fetchCloudServices();
 });
@@ -200,7 +220,6 @@ onMounted(async () => {
         <div class="card-header">
           <span>雲平台列表</span>
           <div class="filter-controls-header"> 
-            <!-- 雲平台篩選 -->
             <el-select
               v-model="selectedCloudType"
               placeholder="選擇平台類型"
@@ -216,7 +235,6 @@ onMounted(async () => {
               />
             </el-select>
 
-            <!-- 搜尋框 -->
             <el-input 
               v-model="searchQuery"
               placeholder="搜尋平台ID、帳號或金鑰..." 
@@ -225,17 +243,16 @@ onMounted(async () => {
               clearable
             /> 
 
-            <!-- 新增雲平台按鈕 -->
             <el-button 
               type="primary" 
               size="small" 
+              :icon="Plus"
               style="margin-right: 10px;"
               @click="handleAddCloudPlatform"
             >
               新增雲平台
             </el-button>
             
-            <!-- 更新資料按鈕 -->
             <el-button 
               type="success" 
               size="small" 
@@ -251,11 +268,9 @@ onMounted(async () => {
 
       <div class="table-container">
         <el-table v-loading="loading" :data="filteredData" style="width: 100%" border stripe>
-          
           <el-table-column prop="cloud_type" label="雲平台類型" min-width="120" sortable />
           <el-table-column prop="cloud_account_id" label="雲平台ID" width="200" show-overflow-tooltip />
           
-          <!-- 專案代號 (Array Display) -->
           <el-table-column label="專案代號" width="150" show-overflow-tooltip>
              <template #default="scope">
                  {{ scope.row.projects?.map((p: any) => p.codename).join(', ') || 'N/A' }}
@@ -284,7 +299,6 @@ onMounted(async () => {
               <template #default="scope">{{ formatDate(scope.row.user_change_password_previous_time) }}</template>
            </el-table-column>
            
-           <!-- 金鑰 ID (Nested Array Display) -->
           <el-table-column label="金鑰ID" min-width="350">
              <template #default="scope">
                 <div v-if="scope.row.keys && scope.row.keys.length > 0">
@@ -296,7 +310,6 @@ onMounted(async () => {
              </template>
           </el-table-column>
 
-          <!-- 操作欄位 (移除 fixed) -->
           <el-table-column label="操作" min-width="120" align="center"> 
             <template #default="scope">
               <el-button
@@ -312,6 +325,93 @@ onMounted(async () => {
         </el-table>
       </div>
     </el-card>
+
+    <el-dialog
+      v-model="dialogVisible"
+      title="新增雲平台帳號"
+      width="550px"
+      destroy-on-close
+    >
+      <el-form
+        ref="ruleFormRef"
+        :model="addForm"
+        :rules="rules"
+        label-width="100px"
+        label-position="top"
+      >
+        <el-form-item label="雲平台類型" prop="cloud_type">
+          <el-radio-group v-model="addForm.cloud_type">
+            <el-radio-button label="AWS" />
+            <el-radio-button label="GCP" />
+            <el-radio-button label="Azure" />
+            <el-radio-button label="Other">其他</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="addForm.cloud_type === 'Other'" label="自定義平台名稱" prop="other_type_name">
+          <el-input v-model="addForm.other_type_name" placeholder="輸入平台名稱，例如：Alibaba Cloud, DigitalOcean..." />
+        </el-form-item>
+
+        <el-form-item label="帳號顯示名稱" prop="account_name">
+          <el-input v-model="addForm.account_name" placeholder="例如：開發環境主帳號" />
+        </el-form-item>
+
+        <el-form-item label="所屬專案" prop="project_codename">
+          <el-select v-model="addForm.project_codename" placeholder="選擇關聯專案" style="width: 100%">
+            <el-option 
+              v-for="code in auth.availableCodename" 
+              :key="code" 
+              :label="code" 
+              :value="code" 
+            />
+          </el-select>
+        </el-form-item>
+
+        <div v-if="addForm.cloud_type === 'AWS'">
+          <el-form-item label="Access Key ID" prop="access_key">
+            <el-input v-model="addForm.access_key" placeholder="AKIA..." />
+          </el-form-item>
+          <el-form-item label="Secret Access Key" prop="secret_key">
+            <el-input v-model="addForm.secret_key" type="password" show-password placeholder="輸入金鑰內容" />
+          </el-form-item>
+        </div>
+
+        <div v-if="addForm.cloud_type === 'GCP'">
+          <el-form-item label="Service Account JSON" prop="access_key">
+            <el-input
+              v-model="addForm.access_key"
+              type="textarea"
+              :rows="5"
+              placeholder="請貼上 GCP Service Account JSON 內容"
+            />
+          </el-form-item>
+        </div>
+
+        <div v-if="addForm.cloud_type === 'Azure' || addForm.cloud_type === 'Other'">
+          <el-form-item label="連線憑證/金鑰內容" prop="access_key">
+            <el-input
+              v-model="addForm.access_key"
+              type="textarea"
+              :rows="5"
+              placeholder="請輸入該平台的 API Key、Token 或 Connection String"
+            />
+          </el-form-item>
+        </div>
+
+        <el-form-item label="備註" prop="description">
+          <el-input v-model="addForm.description" type="textarea" placeholder="可選填相關說明" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="submitForm(ruleFormRef)">
+            確定新增
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -336,8 +436,11 @@ onMounted(async () => {
 .text-gray-400 {
     color: #9ca3af;
 }
-/* 確保表格內容不換行，保持整齊 */
 .el-table .cell {
     white-space: nowrap;
+}
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

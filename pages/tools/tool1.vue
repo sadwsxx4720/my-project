@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh } from '@element-plus/icons-vue' // 【修改】加入 Refresh
+import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'default'
@@ -30,7 +30,7 @@ interface KeyData {
 // --- State ---
 const keyList = ref<KeyData[]>([]) 
 const loading = ref(false)
-const isUpdating = ref(false) // 【新增】更新按鈕 loading 狀態
+const isUpdating = ref(false) 
 const searchQuery = ref('') 
 const cloudTypeFilter = ref('all') 
 const currentUserProjectRole = ref<string>('') 
@@ -41,9 +41,10 @@ const addKeyDialogVisible = ref(false)
 const isSubmittingKey = ref(false)
 const addKeyForm = reactive({
   codename: '',
-  cloud_type: '', // 'AWS' or 'GCP'
+  cloud_type: '', 
   account: '',    // username or service_account_email
-  key_type: 'Parent' // 'Parent' or 'Child'
+  key_type: '',   // 預設為空，讓使用者選擇
+  // 【修改】已移除 parent_key_id
 })
 
 // --- Computed: 表單驗證 ---
@@ -51,7 +52,8 @@ const isFormValid = computed(() => {
   return (
     addKeyForm.codename.trim() !== '' &&
     addKeyForm.cloud_type !== '' &&
-    addKeyForm.account.trim() !== ''
+    addKeyForm.account.trim() !== '' &&
+    addKeyForm.key_type !== '' 
   )
 })
 
@@ -86,7 +88,7 @@ const fetchKeys = async () => {
   }
 }
 
-// 【新增】更新資料功能
+// 更新資料功能
 const handleUpdateData = async () => {
   try {
     isUpdating.value = true
@@ -101,8 +103,7 @@ const handleUpdateData = async () => {
 
     // 同時呼叫 AWS Summary, GCP Summary
     await Promise.allSettled([
-      axios.get(`http://localhost:8000/cloud_platform/gcp/iam/summary?t=${timestamp}`, { headers }),
-      axios.get(`http://localhost:8000/cloud_platform/aws/iam/summary?t=${timestamp}`, { headers })
+      axios.get(`http://localhost:8000/cloud_platform/summary?t=${timestamp}`, { headers })
     ])
     
     // 重新獲取金鑰列表
@@ -207,13 +208,6 @@ const filteredData = computed(() => {
   });
 });
 
-const projectOptions = computed(() => {
-  if (auth.currentSelectedCodename && auth.currentSelectedCodename !== 'all') {
-    return [auth.currentSelectedCodename]
-  }
-  return auth.availableCodename;
-})
-
 // --- Methods ---
 
 // 1. 狀態切換 (Active <-> Disabled)
@@ -253,22 +247,17 @@ const handleToggleState = async (row: KeyData) => {
   }
 }
 
-const handleAddParentKey = () => {
-  addKeyForm.codename = auth.currentSelectedCodename !== 'all' ? auth.currentSelectedCodename : '';
-  addKeyForm.cloud_type = '';
-  addKeyForm.account = '';
-  addKeyForm.key_type = 'Parent';
-  addKeyDialogVisible.value = true;
-}
-
-const handleAddChildKey = (row: KeyData) => {
+// 【修改】開啟新增金鑰 Modal (綁定在列表按鈕)
+const handleOpenAddKeyDialog = (row: KeyData) => {
   addKeyForm.codename = row.codename;
   addKeyForm.cloud_type = row.cloud_type;
-  addKeyForm.key_type = 'Child'; 
-  addKeyForm.account = ''; 
+  // 【修改】移除 parent_key_id 的賦值
+  addKeyForm.account = '';
+  addKeyForm.key_type = 'Child'; // 預設選中 Child，但使用者可以改
   addKeyDialogVisible.value = true;
 }
 
+// 【修改】送出新增金鑰
 const submitAddKey = async () => {
   if (!isFormValid.value) {
     ElMessage.warning('請填寫完整資訊');
@@ -282,19 +271,20 @@ const submitAddKey = async () => {
     let url = '';
     let payload = {};
 
+    // 根據需求組裝 Payload (【修改】移除 parent_key_id)
     if (addKeyForm.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/create';
       payload = {
         username: addKeyForm.account, 
         codename: addKeyForm.codename,
-        key_type: addKeyForm.key_type 
+        key_type: addKeyForm.key_type
       };
     } else if (addKeyForm.cloud_type === 'GCP') {
       url = 'http://localhost:8000/cloud_platform/gcp/iam/create';
       payload = {
         service_account_email: addKeyForm.account,
         codename: addKeyForm.codename,
-        key_type: addKeyForm.key_type 
+        key_type: addKeyForm.key_type
       };
     }
 
@@ -303,7 +293,7 @@ const submitAddKey = async () => {
     });
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
-      ElMessage.success(`${addKeyForm.key_type === 'Parent' ? '母' : '子'}金鑰新增成功`);
+      ElMessage.success('金鑰新增成功');
       addKeyDialogVisible.value = false;
       await fetchKeys();
     } else {
@@ -333,12 +323,14 @@ const handleDeleteKey = async (row: KeyData) => {
     if (row.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/delete';
       payload = {
+        username: row.user_account,
         codename: row.codename,
         access_key_id: row.key_id 
       };
     } else if (row.cloud_type === 'GCP') {
       url = 'http://localhost:8000/cloud_platform/gcp/iam/delete';
       payload = {
+        username: row.user_account,
         codename: row.codename,
         key_id: row.key_id
       };
@@ -410,15 +402,6 @@ watch(() => auth.currentSelectedCodename, async () => {
               prefix-icon="Search"
             /> 
             
-            <el-button 
-              v-if="auth.isSuperuser"
-              type="primary" 
-              @click="handleAddParentKey"
-            >
-              新增母Key
-            </el-button>
-
-            <!-- 【新增】更新資料按鈕 -->
             <el-button 
               type="success" 
               :icon="Refresh" 
@@ -511,17 +494,15 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </div>
                 <span v-else style="margin-right: 5px; color: #ccc;">-</span>
 
-                <!-- 2. 新增子 Key (僅 Parent 顯示，且需有權限) -->
                 <el-button
                   v-if="scope.row.key_type === 'Parent' && canManageKeys && scope.row.key_state === 'Active'"
                   size="small"
                   type="success"
-                  @click="handleAddChildKey(scope.row)"
+                  @click="handleOpenAddKeyDialog(scope.row)"
                 >
                   新增金鑰
                 </el-button>
 
-                <!-- 3. 刪除 Key (僅 Child 且有權限者顯示) -->
                 <el-button
                   v-if="scope.row.key_type === 'Child' && scope.row.key_state === 'Disabled' && canManageKeys"
                   size="small"
@@ -538,31 +519,32 @@ watch(() => auth.currentSelectedCodename, async () => {
       </div>
     </el-card>
 
-    <!-- 新增金鑰 Modal -->
     <el-dialog
       v-model="addKeyDialogVisible"
-      :title="addKeyForm.key_type === 'Parent' ? '新增母金鑰' : '新增子金鑰'"
-      width="500px"
+      title="新增金鑰"
+      width="650px"
       append-to-body
     >
       <el-form :model="addKeyForm" label-position="top">
         
-        <el-form-item label="專案代號" required>
-          <el-select v-model="addKeyForm.codename" placeholder="請選擇專案" style="width: 100%" :disabled="addKeyForm.key_type === 'Child'">
-            <el-option v-for="code in projectOptions" :key="code" :label="code" :value="code" />
-          </el-select>
+        <el-form-item label="專案代號">
+           <el-input v-model="addKeyForm.codename" disabled />
         </el-form-item>
 
-        <el-form-item label="雲平台類型" required>
-          <el-select v-model="addKeyForm.cloud_type" placeholder="請選擇雲平台" style="width: 100%" :disabled="addKeyForm.key_type === 'Child'">
-            <el-option label="AWS" value="AWS" />
-            <el-option label="GCP" value="GCP" />
+        <el-form-item label="雲平台類型">
+           <el-input v-model="addKeyForm.cloud_type" disabled />
+        </el-form-item>
+
+        <el-form-item label="要新增的金鑰類型" required>
+          <el-select v-model="addKeyForm.key_type" placeholder="請選擇金鑰類型" style="width: 100%">
+            <el-option label="Parent (母Key)" value="Parent" />
+            <el-option label="Child (子Key)" value="Child" />
           </el-select>
         </el-form-item>
 
         <el-form-item 
           v-if="addKeyForm.cloud_type === 'AWS'" 
-          :label="addKeyForm.key_type === 'Parent' ? '創建母key帳號 (IAM Username)' : 'IAM Username (請輸入)'" 
+          label="IAM Username (請輸入)" 
           required
         >
           <el-input v-model="addKeyForm.account" placeholder="請輸入 AWS IAM Username" />
@@ -570,7 +552,7 @@ watch(() => auth.currentSelectedCodename, async () => {
 
         <el-form-item 
           v-if="addKeyForm.cloud_type === 'GCP'" 
-          :label="addKeyForm.key_type === 'Parent' ? '創建母key帳號 (Service Account Email)' : 'Service Account Email (請輸入)'" 
+          label="Service Account Email (請輸入)" 
           required
         >
           <el-input v-model="addKeyForm.account" placeholder="請輸入 GCP Service Account Email" />
@@ -582,7 +564,7 @@ watch(() => auth.currentSelectedCodename, async () => {
         <span class="dialog-footer">
           <el-button @click="addKeyDialogVisible = false">取消</el-button>
           <el-button type="primary" :loading="isSubmittingKey" @click="submitAddKey">
-            確定新增
+            確定新增金鑰
           </el-button>
         </span>
       </template>
