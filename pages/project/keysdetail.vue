@@ -260,7 +260,6 @@ const handleToggleState = async (row: any) => {
     updatingStateId.value = row.key_id;
     const token = localStorage.getItem('auth_token');
 
-    // 【修正】Payload 傳送的是 "目前狀態 (currentState)"
     // 格式：{ "key_id": "string", "key_state": "string" }
     const res = await axios.post('http://localhost:8000/keys/update_state', 
       {
@@ -325,6 +324,7 @@ const isSubmitDisabled = computed(() => {
   return bindForm.platform === 'AWS' ? !bindForm.secretKey : !bindForm.jsonContent;
 });
 
+// 【修改】submitBindKey 函式：新增 summary API 呼叫
 const submitBindKey = async () => {
   submittingBindKey.value = true;
   try {
@@ -347,6 +347,19 @@ const submitBindKey = async () => {
     });
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
+       
+       // --- [新增] 同步呼叫 Summary API ---
+       try {
+         await axios.post('http://localhost:8000/cloud_platform/summary', 
+           { codename: projectCodename.value }, 
+           { headers: { Authorization: `Bearer ${token}` } }
+         );
+       } catch (summaryErr) {
+         console.error('更新 Cloud Platform Summary 失敗', summaryErr);
+         // 這裡選擇不阻擋流程，僅紀錄錯誤，因為綁定本身已經成功
+       }
+       // -----------------------------------
+
        ElMessage.success('綁定成功');
        bindKeyVisible.value = false;
        await loadKeyDetails(); // 重新載入列表

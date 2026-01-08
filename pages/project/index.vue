@@ -86,7 +86,7 @@ plain
 
 >
 
-已綁定母 Key 詳細資料
+管理綁定母 Key
 
 </el-button>
 
