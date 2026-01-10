@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh, Download } from '@element-plus/icons-vue' // 加入 Download icon
+import { Plus, Delete, VideoPause, VideoPlay, Search, Refresh, Download, Key } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'default'
@@ -34,27 +34,52 @@ const isUpdating = ref(false)
 const searchQuery = ref('') 
 const cloudTypeFilter = ref('all') 
 const currentUserProjectRole = ref<string>('') 
-const updatingStateMap = ref<Record<string, boolean>>({}) 
+const updatingStateMap = ref<Record<string, boolean>>({}) // 控制啟用/停用 Loading
+const creatingKeyMap = ref<Record<string, boolean>>({}) // 控制列表內新增金鑰 Loading
 
-// 新增金鑰 Modal 相關 State
-const addKeyDialogVisible = ref(false)
-const isSubmittingKey = ref(false)
-const addKeyForm = reactive({
+// First Create Modal 相關 State
+const firstCreateDialogVisible = ref(false)
+const isSubmittingFirstKey = ref(false)
+const firstCreateForm = reactive({
   codename: '',
-  cloud_type: '', 
+  cloud_type: '', // 使用者選擇
   account: '',    // username or service_account_email
-  key_type: '',   // 預設為空，讓使用者選擇
+  key_type: '',   // 使用者選擇 Parent/Child
 })
 
-// --- Computed: 表單驗證 ---
-const isFormValid = computed(() => {
+// --- Computed: 表單驗證 (First Create) ---
+const isFirstCreateFormValid = computed(() => {
   return (
-    addKeyForm.codename.trim() !== '' &&
-    addKeyForm.cloud_type !== '' &&
-    addKeyForm.account.trim() !== '' &&
-    addKeyForm.key_type !== '' 
+    firstCreateForm.codename.trim() !== '' &&
+    firstCreateForm.cloud_type !== '' &&
+    firstCreateForm.account.trim() !== '' &&
+    firstCreateForm.key_type !== '' 
   )
 })
+
+// --- Helper: 下載 Blob 檔案 ---
+const downloadBlob = (data: Blob, defaultFilename: string, headers: any) => {
+    const blob = new Blob([data], { type: 'application/json' });
+    const downloadUrl = window.URL.createObjectURL(blob);
+    
+    let filename = defaultFilename;
+    const contentDisposition = headers['content-disposition'];
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch.length === 2) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+}
 
 // --- API Functions ---
 
@@ -209,29 +234,41 @@ const filteredData = computed(() => {
 
 // --- Methods ---
 
-// 1. 狀態切換 (Active <-> Disabled)
+// 狀態切換 (Update) -> /cloud_platform/{type}/iam/update
 const handleToggleState = async (row: KeyData) => {
   if (updatingStateMap.value[row.key_id]) return;
 
   const currentState = row.key_state;
   const actionText = currentState === 'Active' ? '停用' : '啟用';
+  const cloudType = row.cloud_type;
 
   try {
     updatingStateMap.value[row.key_id] = true;
     const token = localStorage.getItem('auth_token');
 
-    console.log(`正在${actionText}金鑰 ${row.key_id}... 傳送當前狀態: ${currentState}`);
+    let url = '';
+    if (cloudType === 'AWS') {
+      url = 'http://localhost:8000/cloud_platform/aws/iam/update';
+    } else if (cloudType === 'GCP') {
+      url = 'http://localhost:8000/cloud_platform/gcp/iam/update';
+    } else {
+      ElMessage.error('未知的雲平台類型');
+      return;
+    }
 
-    const res = await axios.post('http://localhost:8000/keys/update_state', 
-      {
-        key_id: row.key_id,
-        key_state: currentState 
-      },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    const payload = {
+      codename: row.codename,
+      key_id: row.key_id,
+      key_state: currentState // 傳送目前狀態，後端負責切換
+    };
+
+    const res = await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        ElMessage.success(`金鑰已${actionText}`);
+       // 前端先暫時更新狀態，隨後會 reload
        row.key_state = currentState === 'Active' ? 'Disabled' : 'Active';
        await fetchKeys(); 
     } else {
@@ -246,89 +283,54 @@ const handleToggleState = async (row: KeyData) => {
   }
 }
 
-// 開啟新增金鑰 Modal
-const handleOpenAddKeyDialog = (row: KeyData) => {
-  addKeyForm.codename = row.codename;
-  addKeyForm.cloud_type = row.cloud_type;
-  addKeyForm.account = '';
-  addKeyForm.key_type = 'Child'; 
-  addKeyDialogVisible.value = true;
-}
-
-// 【修改】送出新增金鑰並處理檔案下載
-const submitAddKey = async () => {
-  if (!isFormValid.value) {
-    ElMessage.warning('請填寫完整資訊');
-    return;
-  }
-
-  isSubmittingKey.value = true;
-  const token = localStorage.getItem('auth_token');
+// 【修改】列表內的新增金鑰 (Rotation)
+// Parent(Active) -> 新增 Parent
+// Child(Active) -> 新增 Child
+const handleRotateKey = async (row: KeyData) => {
+  // 判斷要新增的類型 (跟隨 row 本身的類型)
+  const targetKeyType = row.key_type; 
+  const typeLabel = targetKeyType === 'Parent' ? 'Parent Key' : 'Child Key';
 
   try {
-    let url = '';
-    let payload = {};
+    await ElMessageBox.confirm(
+      `確定要基於金鑰 ${row.key_id} 建立一把新的 ${typeLabel} 嗎？`,
+      '新增金鑰確認',
+      { confirmButtonText: '確定建立', cancelButtonText: '取消', type: 'info' }
+    )
 
-    if (addKeyForm.cloud_type === 'AWS') {
+    creatingKeyMap.value[row.key_id] = true;
+    const token = localStorage.getItem('auth_token');
+    
+    let url = '';
+    if (row.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/create';
-      payload = {
-        username: addKeyForm.account, 
-        codename: addKeyForm.codename,
-        key_type: addKeyForm.key_type
-      };
-    } else if (addKeyForm.cloud_type === 'GCP') {
+    } else if (row.cloud_type === 'GCP') {
       url = 'http://localhost:8000/cloud_platform/gcp/iam/create';
-      payload = {
-        service_account_email: addKeyForm.account,
-        codename: addKeyForm.codename,
-        key_type: addKeyForm.key_type
-      };
     }
 
-    // 【修改】重點：設定 responseType 為 blob 以接收檔案流
+    const payload = {
+      codename: row.codename,
+      key_type: targetKeyType, // 動態帶入 Parent 或 Child
+      old_key_id: row.key_id
+    };
+
     const res = await axios.post(url, payload, {
       headers: { Authorization: `Bearer ${token}` },
-      responseType: 'blob' 
+      responseType: 'blob'
     });
 
-    // 判斷回應狀態，若為 200 則代表成功且回傳了檔案
     if (res.status === 200) {
-      // 1. 建立 Blob 物件
-      const blob = new Blob([res.data], { type: 'application/json' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      
-      // 2. 嘗試從 Header 取得檔名 (如果有 Content-Disposition)
-      let filename = 'credentials.json';
-      const contentDisposition = res.headers['content-disposition'];
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
-        if (filenameMatch && filenameMatch.length === 2) {
-          filename = filenameMatch[1];
-        }
-      }
-
-      // 3. 建立虛擬連結並觸發下載
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      
-      // 4. 清理
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(downloadUrl);
-
-      ElMessage.success('金鑰新增成功，正在下載憑證檔案...');
-      addKeyDialogVisible.value = false;
-      await fetchKeys();
+       downloadBlob(res.data, 'credentials.json', res.headers);
+       ElMessage.success('金鑰新增成功，正在下載憑證檔案...');
+       await fetchKeys();
     } else {
-      // 如果 status 不是 200，嘗試讀取 blob 內容顯示錯誤 (雖然通常 axios 會 catch error)
       ElMessage.error('新增失敗');
     }
 
   } catch (err: any) {
+    if (err === 'cancel') return;
     console.error(err);
-    // 【修改】錯誤處理：因為 responseType 是 blob，錯誤訊息也在 blob 裡，需要轉回文字
+    // Blob 錯誤處理
     if (err.response && err.response.data instanceof Blob) {
         const reader = new FileReader();
         reader.onload = () => {
@@ -344,10 +346,88 @@ const submitAddKey = async () => {
         ElMessage.error('新增金鑰發生錯誤');
     }
   } finally {
-    isSubmittingKey.value = false;
+    if (row && row.key_id) creatingKeyMap.value[row.key_id] = false;
   }
 }
 
+// 開啟 First Create Modal
+const handleOpenFirstCreateDialog = () => {
+  // 檢查是否選擇了專案
+  const currentCode = auth.currentSelectedCodename;
+  if (!currentCode || currentCode === 'all') {
+    ElMessage.warning('請先在右上角選擇一個特定的專案 (Codename) 才能進行首次新增金鑰');
+    return;
+  }
+
+  // 初始化表單
+  firstCreateForm.codename = currentCode;
+  firstCreateForm.cloud_type = ''; // 讓使用者選
+  firstCreateForm.account = '';
+  firstCreateForm.key_type = '';   // 讓使用者選
+  
+  firstCreateDialogVisible.value = true;
+}
+
+// 送出 First Create -> /cloud_platform/{type}/iam/firstcreate
+const submitFirstCreateKey = async () => {
+  if (!isFirstCreateFormValid.value) {
+    ElMessage.warning('請填寫完整資訊');
+    return;
+  }
+
+  isSubmittingFirstKey.value = true;
+  const token = localStorage.getItem('auth_token');
+
+  try {
+    let url = '';
+    if (firstCreateForm.cloud_type === 'AWS') {
+      url = 'http://localhost:8000/cloud_platform/aws/iam/firstcreate';
+    } else if (firstCreateForm.cloud_type === 'GCP') {
+      url = 'http://localhost:8000/cloud_platform/gcp/iam/firstcreate';
+    }
+
+    const payload = {
+      account: firstCreateForm.account,
+      codename: firstCreateForm.codename,
+      key_type: firstCreateForm.key_type
+    };
+
+    const res = await axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}` },
+      responseType: 'blob' 
+    });
+
+    if (res.status === 200) {
+      downloadBlob(res.data, 'credentials.json', res.headers);
+      ElMessage.success('金鑰首次新增成功，正在下載憑證檔案...');
+      firstCreateDialogVisible.value = false;
+      await fetchKeys();
+    } else {
+      ElMessage.error('新增失敗');
+    }
+
+  } catch (err: any) {
+    console.error(err);
+    if (err.response && err.response.data instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const errorData = JSON.parse(reader.result as string);
+                ElMessage.error(errorData.detail || errorData.message || '新增金鑰失敗');
+            } catch (e) {
+                ElMessage.error('新增金鑰發生未預期的錯誤');
+            }
+        };
+        reader.readAsText(err.response.data);
+    } else {
+        ElMessage.error('新增金鑰發生錯誤');
+    }
+  } finally {
+    isSubmittingFirstKey.value = false;
+  }
+}
+
+// 刪除金鑰
 const handleDeleteKey = async (row: KeyData) => {
   try {
     await ElMessageBox.confirm(
@@ -443,11 +523,20 @@ watch(() => auth.currentSelectedCodename, async () => {
             /> 
             
             <el-button 
+              type="primary" 
+              :icon="Plus" 
+              @click="handleOpenFirstCreateDialog"
+              style="margin-right: 3px;"
+              v-if="canManageKeys"
+            >
+              新增金鑰
+            </el-button>
+            
+            <el-button 
               type="success" 
               :icon="Refresh" 
               :loading="isUpdating"
               @click="handleUpdateData"
-              style="margin-left: 10px;"
             >
               更新資料
             </el-button>
@@ -505,7 +594,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_description" label="描述" min-width="200" show-overflow-tooltip />
 
-          <el-table-column label="操作" width="200" align="center"> 
+          <el-table-column label="操作" width="220" align="center"> 
             <template #default="scope">
               <div class="action-buttons">
                 
@@ -537,8 +626,19 @@ watch(() => auth.currentSelectedCodename, async () => {
                 <el-button
                   v-if="scope.row.key_type === 'Parent' && canManageKeys && scope.row.key_state === 'Active'"
                   size="small"
-                  type="success"
-                  @click="handleOpenAddKeyDialog(scope.row)"
+                  type="primary"
+                  :loading="creatingKeyMap[scope.row.key_id]"
+                  @click="handleRotateKey(scope.row)"
+                >
+                  新增金鑰
+                </el-button>
+
+                <el-button
+                  v-if="scope.row.key_type === 'Child' && canManageKeys && scope.row.key_state === 'Active'"
+                  size="small"
+                  type="primary"
+                  :loading="creatingKeyMap[scope.row.key_id]"
+                  @click="handleRotateKey(scope.row)"
                 >
                   新增金鑰
                 </el-button>
@@ -560,54 +660,64 @@ watch(() => auth.currentSelectedCodename, async () => {
     </el-card>
 
     <el-dialog
-      v-model="addKeyDialogVisible"
-      title="新增金鑰"
+      v-model="firstCreateDialogVisible"
+      title="第一次新增金鑰"
       width="650px"
       append-to-body
       :close-on-click-modal="false"
     >
-      <el-form :model="addKeyForm" label-position="top">
+      <el-form :model="firstCreateForm" label-position="top">
         
         <el-form-item label="專案代號">
-           <el-input v-model="addKeyForm.codename" disabled />
+           <el-input v-model="firstCreateForm.codename" disabled placeholder="請先選擇專案" />
         </el-form-item>
 
-        <el-form-item label="雲平台類型">
-           <el-input v-model="addKeyForm.cloud_type" disabled />
+        <el-form-item label="雲平台類型" required>
+          <el-select v-model="firstCreateForm.cloud_type" placeholder="請選擇雲平台" style="width: 100%">
+            <el-option label="AWS" value="AWS" />
+            <el-option label="GCP" value="GCP" />
+          </el-select>
         </el-form-item>
 
         <el-form-item label="要新增的金鑰類型" required>
-          <el-select v-model="addKeyForm.key_type" placeholder="請選擇金鑰類型" style="width: 100%">
+          <el-select v-model="firstCreateForm.key_type" placeholder="請選擇金鑰類型" style="width: 100%">
             <el-option label="Parent (母Key)" value="Parent" />
             <el-option label="Child (子Key)" value="Child" />
           </el-select>
         </el-form-item>
 
         <el-form-item 
-          v-if="addKeyForm.cloud_type === 'AWS'" 
+          v-if="firstCreateForm.cloud_type === 'AWS'" 
           label="IAM Username (請輸入)" 
           required
         >
-          <el-input v-model="addKeyForm.account" placeholder="請輸入 AWS IAM Username" />
+          <el-input v-model="firstCreateForm.account" placeholder="請輸入 AWS IAM Username" />
         </el-form-item>
 
         <el-form-item 
-          v-if="addKeyForm.cloud_type === 'GCP'" 
+          v-if="firstCreateForm.cloud_type === 'GCP'" 
           label="Service Account Email (請輸入)" 
           required
         >
-          <el-input v-model="addKeyForm.account" placeholder="請輸入 GCP Service Account Email" />
+          <el-input v-model="firstCreateForm.account" placeholder="請輸入 GCP Service Account Email" />
         </el-form-item>
+        
+        <el-alert
+            v-if="!firstCreateForm.cloud_type"
+            title="請先選擇雲平台類型以輸入帳號資訊"
+            type="info"
+            :closable="false"
+        />
 
       </el-form>
       
       <template #footer>
         <span class="dialog-footer">
-          <el-button @click="addKeyDialogVisible = false">取消</el-button>
+          <el-button @click="firstCreateDialogVisible = false">取消</el-button>
           <el-button 
             type="primary" 
-            :loading="isSubmittingKey" 
-            @click="submitAddKey"
+            :loading="isSubmittingFirstKey" 
+            @click="submitFirstCreateKey"
             :icon="Download"
           >
             確定新增並下載憑證

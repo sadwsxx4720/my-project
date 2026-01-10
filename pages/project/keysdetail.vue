@@ -109,9 +109,6 @@
           </div>
 
           <div v-else-if="bindForm.platform === 'GCP'" class="platform-section">
-            <el-form-item label="GCP Service Account Key ID" required>
-              <el-input v-model="bindForm.keyId" placeholder="請輸入 GCP Key ID" size="large" />
-            </el-form-item>
             <el-form-item label="GCP Secret Key (JSON File)" required>
                <el-upload
                   ref="uploadRef"
@@ -126,8 +123,17 @@
                   accept=".json"
                 >
                   <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-                  <div class="el-upload__text">拖曳或點擊上傳 JSON</div>
+                  <div class="el-upload__text">拖曳或點擊上傳 JSON (自動讀取 ID)</div>
                 </el-upload>
+            </el-form-item>
+
+            <el-form-item label="GCP Service Account Key ID (自動讀取)" required>
+              <el-input 
+                v-model="bindForm.keyId" 
+                placeholder="上傳 JSON 檔案後將自動填入" 
+                size="large" 
+                disabled 
+              />
             </el-form-item>
           </div>
         </el-form>
@@ -217,7 +223,7 @@ const loadKeyDetails = async () => {
     // 2. 遍歷每個 ID，分別打 /keys/get_one (POST) 取得詳細資訊
     const detailsPromises = rawMainKeys.value.map(async (key) => {
       try {
-        const detailRes = await axios.post('http://localhost:8000/keys/get_one', // 注意這裡是 keys 複數
+        const detailRes = await axios.post('http://localhost:8000/keys/get_one', 
           { key_id: key.key_id }, 
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -246,13 +252,23 @@ const loadKeyDetails = async () => {
   }
 };
 
-// --- Core Logic: Update State (修正後) ---
+// --- Core Logic: Update State (已依需求修正 API 與 Payload) ---
 const handleToggleState = async (row: any) => {
   if (updatingStateId.value) return;
 
-  const currentState = row.key_state; // 取得「目前狀態」
+  const currentState = row.key_state;
   
-  // 計算預期的目標狀態 (僅用於 API 成功後的 UI 更新)
+  // 1. 判斷要打哪個 API 節點
+  let apiUrl = '';
+  if (row.cloud_type === 'AWS') {
+    apiUrl = 'http://localhost:8000/cloud_platform/aws/iam/update';
+  } else if (row.cloud_type === 'GCP') {
+    apiUrl = 'http://localhost:8000/cloud_platform/gcp/iam/update';
+  } else {
+    ElMessage.error('未知的雲端平台類型，無法更新狀態');
+    return;
+  }
+
   const targetState = currentState === 'Active' ? 'Disabled' : 'Active';
   const actionText = currentState === 'Active' ? '停用' : '啟用';
 
@@ -260,12 +276,14 @@ const handleToggleState = async (row: any) => {
     updatingStateId.value = row.key_id;
     const token = localStorage.getItem('auth_token');
 
-    // 格式：{ "key_id": "string", "key_state": "string" }
-    const res = await axios.post('http://localhost:8000/keys/update_state', 
-      {
-        key_id: row.key_id,
-        key_state: currentState // <--- 這裡是傳送目前狀態
-      },
+    // 2. 修正 Payload 格式：包含 codename, key_id, key_state (目前狀態)
+    const payload = {
+      codename: projectCodename.value,
+      key_id: row.key_id,
+      key_state: currentState 
+    };
+
+    const res = await axios.post(apiUrl, payload,
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
@@ -308,8 +326,21 @@ const handleGcpFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) =
       if (typeof result === 'string') {
         const jsonObj = JSON.parse(result);
         bindForm.jsonContent = JSON.stringify(jsonObj);
+        
+        // 自動從 JSON 獲取 private_key_id
+        if (jsonObj.private_key_id) {
+          bindForm.keyId = jsonObj.private_key_id;
+          ElMessage.success('已讀取憑證 ID');
+        } else {
+          ElMessage.warning('上傳的 JSON 檔案中找不到 private_key_id 欄位');
+          bindForm.keyId = ''; 
+        }
       }
-    } catch (err) { bindForm.jsonContent = ''; }
+    } catch (err) { 
+      bindForm.jsonContent = '';
+      bindForm.keyId = '';
+      ElMessage.error('JSON 解析失敗');
+    }
   };
   reader.readAsText(rawFile);
 };
@@ -324,17 +355,15 @@ const isSubmitDisabled = computed(() => {
   return bindForm.platform === 'AWS' ? !bindForm.secretKey : !bindForm.jsonContent;
 });
 
-// 【修改】submitBindKey 函式：新增 summary API 呼叫
 const submitBindKey = async () => {
   submittingBindKey.value = true;
   try {
     const token = localStorage.getItem('auth_token');
     
-    // 1. 準備新的 Key
+    // 準備新的 Key (GCP 時 keyId 已經由 JSON 解析填入)
     let finalKeyInfo = bindForm.platform === 'AWS' ? bindForm.secretKey : bindForm.jsonContent;
     const newKey = { key_id: bindForm.keyId, key_info: finalKeyInfo };
     
-    // 2. 為了 append，我們需要將現有的 keys 加上新的 key
     const updatedMainKeys = [...rawMainKeys.value, newKey];
 
     const payload = {
@@ -348,7 +377,7 @@ const submitBindKey = async () => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        
-       // --- [新增] 同步呼叫 Summary API ---
+       // 同步呼叫 Summary API
        try {
          await axios.post('http://localhost:8000/cloud_platform/summary', 
            { codename: projectCodename.value }, 
@@ -356,9 +385,7 @@ const submitBindKey = async () => {
          );
        } catch (summaryErr) {
          console.error('更新 Cloud Platform Summary 失敗', summaryErr);
-         // 這裡選擇不阻擋流程，僅紀錄錯誤，因為綁定本身已經成功
        }
-       // -----------------------------------
 
        ElMessage.success('綁定成功');
        bindKeyVisible.value = false;
