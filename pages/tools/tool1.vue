@@ -25,6 +25,8 @@ interface KeyData {
   rotation_state: string;
   cloud_type: 'AWS' | 'GCP' | string;
   user_account?: string; 
+  source?: string;       // 新增：來源
+  old_key?: string | null; // 新增：舊金鑰 ID
 }
 
 // --- State ---
@@ -222,6 +224,8 @@ const filteredData = computed(() => {
         safeStr(key.key_type),
         safeStr(key.key_state),
         safeStr(key.rotation_state),
+        safeStr(key.source),    // 新增搜尋來源
+        safeStr(key.old_key),   // 新增搜尋舊金鑰
         formatDate(key.key_create_time).toLowerCase(),
         formatDate(key.key_last_time_used).toLowerCase()
       ];
@@ -574,6 +578,12 @@ watch(() => auth.currentSelectedCodename, async () => {
 
           <el-table-column prop="codename" label="專案代號" width="120" sortable />
           
+          <el-table-column prop="source" label="來源" width="120" sortable show-overflow-tooltip>
+             <template #default="scope">
+                 {{ scope.row.source || '-' }}
+             </template>
+          </el-table-column>
+          
           <el-table-column prop="key_state" label="狀態" width="100" align="center">
              <template #default="scope">
                  <el-tag :type="scope.row.key_state === 'Active' ? 'success' : 'info'">
@@ -583,6 +593,13 @@ watch(() => auth.currentSelectedCodename, async () => {
           </el-table-column>
 
           <el-table-column prop="rotation_state" label="輪替狀態" width="120" align="center" />
+          
+          <el-table-column prop="old_key" label="上一代金鑰" width="200" show-overflow-tooltip>
+             <template #default="scope">
+                 <span v-if="scope.row.old_key" style="font-family: monospace;">{{ scope.row.old_key }}</span>
+                 <span v-else class="text-placeholder">-</span>
+             </template>
+          </el-table-column>
 
           <el-table-column prop="key_create_time" label="創建時間" width="180" sortable>
              <template #default="scope">{{ formatDate(scope.row.key_create_time) }}</template>
@@ -594,7 +611,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_description" label="描述" min-width="200" show-overflow-tooltip />
 
-          <el-table-column label="操作" width="220" align="center"> 
+          <el-table-column label="操作" width="220" align="center" fixed="right"> 
             <template #default="scope">
               <div class="action-buttons">
                 

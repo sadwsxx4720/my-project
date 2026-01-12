@@ -112,59 +112,62 @@ const goBack = () => {
 
 const handleSubmit = async () => {
   if (!formRef.value) return
-  
-  await formRef.value.validate(async (valid) => {
-    if (valid) {
-      loading.value = true
-      try {
-        const token = localStorage.getItem('auth_token')
-        const currentCodename = auth.currentSelectedCodename
 
-        if (!currentCodename || currentCodename === 'all') {
-             ElMessage.warning('無法確認當前專案，請回到設定頁重新選擇')
-             return
-        }
+  // 使用 await 直接獲取驗證結果
+  const valid = await formRef.value.validate()
+  if (!valid) return
 
-        // 1. 先獲取該專案目前的接收者列表
-        const res = await axios.post('http://localhost:8000/projects/get_one', 
-          { codename: currentCodename },
-          { headers: { Authorization: `Bearer ${token}` } }
-        )
-        
-        let existingReceivers = []
-        if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
-             existingReceivers = res.data.data.mailreceivers || []
-        }
+  loading.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const currentCodename = auth.currentSelectedCodename
 
-        // 2. 檢查是否重複
-        if (existingReceivers.some((r: any) => r.email === form.email)) {
-            ElMessage.warning('此 Email 已在通知名單中')
-            loading.value = false
-            return
-        }
-
-        // 3. 加入新 Email
-        const newReceiverList = [...existingReceivers, { email: form.email }]
-
-        // 4. 呼叫 API 更新
-        await axios.post('http://localhost:8000/projects/update_mailreceiver', {
-           codename: currentCodename,
-           mailreceivers: newReceiverList
-        }, { headers: { Authorization: `Bearer ${token}` } })
-        
-        ElMessage.success(`成功新增通知信箱：${form.email}`)
-        router.push('/settings') // 成功後返回設定頁
-      } catch (error) {
-        console.error(error)
-        ElMessage.error('更新失敗，請稍後再試')
-      } finally {
-        loading.value = false
-      }
-    } else {
-      return false
+    if (!currentCodename || currentCodename === 'all') {
+      ElMessage.warning('無法確認當前專案，請回到設定頁重新選擇')
+      return
     }
-  })
+
+    // 1. 先獲取該專案目前的接收者列表
+    const res = await axios.post(
+      'http://localhost:8000/projects/get_one',
+      { codename: currentCodename },
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+
+    let existingReceivers: { email: string }[] = []
+    if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
+      existingReceivers = res.data.data.mailreceivers || []
+    }
+
+    // 2. 檢查是否重複
+    if (existingReceivers.some((r) => r.email === form.email)) {
+      ElMessage.warning('此 Email 已在通知名單中')
+      return
+    }
+
+    // 3. 加入新 Email
+    const newReceiverList = [...existingReceivers, { email: form.email }]
+
+    // 4. 呼叫 API 更新
+    await axios.post(
+      'http://localhost:8000/projects/update_mailreceiver',
+      {
+        codename: currentCodename,
+        mailreceivers: newReceiverList,
+      },
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+
+    ElMessage.success(`成功新增通知信箱：${form.email}`)
+    router.push('/settings') // 成功後返回設定頁
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('更新失敗，請稍後再試')
+  } finally {
+    loading.value = false
+  }
 }
+
 </script>
 
 <style scoped>

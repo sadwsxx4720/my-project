@@ -105,6 +105,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import Chart, { type ChartItem, type ChartConfiguration } from 'chart.js/auto'
+import type { ChartDataset } from 'chart.js';
 
 definePageMeta({
   layout: 'default'
@@ -277,20 +278,25 @@ const renderCharts = (stats: any) => {
         }
     }
 
-    const createConfig = (active: number, disabled: number): ChartConfiguration => ({
-        type: 'doughnut',
-        data: {
-            labels: ['啟用 (Active)', '停用 (Disabled)'],
-            datasets: [{
-                data: [active, disabled],
-                backgroundColor: ['#67C23A', '#F56C6C'],
-                borderWidth: 1,
-                cutout: '70%'
-            }]
-        },
-        options: commonOptions,
-        plugins: [centerTextPlugin]
-    })
+    const createConfig = (
+      active: number,
+      disabled: number
+    ): ChartConfiguration<'doughnut'> => ({
+      type: 'doughnut',
+      data: {
+        labels: ['啟用 (Active)', '停用 (Disabled)'],
+        datasets: [
+          {
+            data: [active, disabled],
+            backgroundColor: ['#67C23A', '#F56C6C'],
+            borderWidth: 1,
+            cutout: '80%',
+          } as ChartDataset<'doughnut', number[]>
+        ]
+      },
+      options: commonOptions,
+      plugins: [centerTextPlugin],
+    });
 
     // 1. All Keys
     const ctxAll = document.getElementById('projectAllKeysChart') as HTMLCanvasElement

@@ -109,6 +109,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { Refresh, Key, User } from '@element-plus/icons-vue'
 import Chart, { type ChartItem, type ChartConfiguration } from 'chart.js/auto'
+import type { ChartDataset} from 'chart.js';
 
 definePageMeta({
   layout: 'default'
@@ -259,20 +260,25 @@ const renderCharts = (stats: any) => {
     }
 
     // Helper: 產生圓餅圖配置
-    const createConfig = (active: number, disabled: number): ChartConfiguration => ({
-        type: 'doughnut', // 改用 doughnut 圖表
-        data: {
-            labels: ['啟用 (Active)', '停用 (Disabled)'],
-            datasets: [{
-                data: [active, disabled],
-                backgroundColor: ['#67C23A', '#F56C6C'], // 綠色, 紅色
-                borderWidth: 1,
-                cutout: '70%' // 設定圓環寬度
-            }]
-        },
-        options: commonOptions,
-        plugins: [centerTextPlugin] // 加入自定義 plugin
-    })
+    const createConfig = (
+      active: number,
+      disabled: number
+    ): ChartConfiguration<'doughnut'> => ({
+      type: 'doughnut',
+      data: {
+        labels: ['啟用 (Active)', '停用 (Disabled)'],
+        datasets: [
+          {
+            data: [active, disabled],
+            backgroundColor: ['#67C23A', '#F56C6C'],
+            borderWidth: 1,
+            cutout: '70%', // ✅ 不再紅線
+          } as ChartDataset<'doughnut', number[]>
+        ],
+      },
+      options: commonOptions,
+      plugins: [centerTextPlugin],
+    });
 
     // 1. All Keys Chart
     const ctxAll = document.getElementById('allKeysChart') as HTMLCanvasElement
