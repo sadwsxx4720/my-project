@@ -447,14 +447,12 @@ const handleDeleteKey = async (row: KeyData) => {
     if (row.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/delete';
       payload = {
-        username: row.user_account,
         codename: row.codename,
-        access_key_id: row.key_id 
+        key_id: row.key_id
       };
     } else if (row.cloud_type === 'GCP') {
       url = 'http://localhost:8000/cloud_platform/gcp/iam/delete';
       payload = {
-        username: row.user_account,
         codename: row.codename,
         key_id: row.key_id
       };
