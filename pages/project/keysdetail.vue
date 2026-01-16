@@ -54,24 +54,24 @@
         <el-table-column label="操作" width="150" align="center">
           <template #default="scope">
             <el-button
-              v-if="scope.row.key_state === 'Active'"
+              v-if="scope.row.key_state === 'Active' && canDeactivate(scope.row)"
               type="danger"
               size="small"
               plain
               :loading="updatingStateId === scope.row.key_id"
               @click="handleToggleState(scope.row)"
             >
-              停用
+              停用金鑰
             </el-button>
             <el-button
-              v-else
+              v-if="scope.row.key_state === 'Disabled'"
               type="success"
               size="small"
               plain
               :loading="updatingStateId === scope.row.key_id"
               @click="handleToggleState(scope.row)"
             >
-              啟用
+              啟用金鑰
             </el-button>
           </template>
         </el-table-column>
@@ -251,6 +251,19 @@ const loadKeyDetails = async () => {
     loading.value = false;
   }
 };
+
+const canDeactivate = (row: any) => {
+  // 這裡的 enrichedKeys 全都是 Parent (因為是從 mainkeys 來的)
+  // 計算該雲平台下 Active 的數量
+  const activeCount = enrichedKeys.value.filter(k => 
+    k.cloud_type === row.cloud_type && 
+    k.key_state === 'Active'
+  ).length;
+
+  // 必須大於 1 才能停用
+  return activeCount > 1;
+}
+
 
 // --- Core Logic: Update State (已依需求修正 API 與 Payload) ---
 const handleToggleState = async (row: any) => {
