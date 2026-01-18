@@ -252,19 +252,6 @@ const loadKeyDetails = async () => {
   }
 };
 
-const canDeactivate = (row: any) => {
-  // 這裡的 enrichedKeys 全都是 Parent (因為是從 mainkeys 來的)
-  // 計算該雲平台下 Active 的數量
-  const activeCount = enrichedKeys.value.filter(k => 
-    k.cloud_type === row.cloud_type && 
-    k.key_state === 'Active'
-  ).length;
-
-  // 必須大於 1 才能停用
-  return activeCount > 1;
-}
-
-
 // --- Core Logic: Update State (已依需求修正 API 與 Payload) ---
 const handleToggleState = async (row: any) => {
   if (updatingStateId.value) return;

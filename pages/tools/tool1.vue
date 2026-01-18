@@ -236,26 +236,6 @@ const filteredData = computed(() => {
   });
 });
 
-// --- Methods ---
-const canDeactivate = (row: KeyData) => {
-  // 子金鑰不做限制
-  if (row.key_type !== 'Parent') return true;
-
-  // 計算同一專案、同一雲平台下，狀態為 Active 的 Parent Key 數量
-  // 使用 keyList 來計算 (確保即使 filtered 也能計算全局)
-  const activeParentCount = keyList.value.filter(k => 
-    k.codename === row.codename && 
-    k.cloud_type === row.cloud_type && 
-    k.key_type === 'Parent' && 
-    k.key_state === 'Active'
-  ).length;
-
-  // 若大於 1，則允許停用此把 Key (因為停用後至少還剩 1 把 Active)
-  return activeParentCount > 1;
-}
-
-
-
 // 狀態切換 (Update) -> /cloud_platform/{type}/iam/update
 const handleToggleState = async (row: KeyData) => {
   if (updatingStateMap.value[row.key_id]) return;
@@ -643,7 +623,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                     </el-button>
 
                     <el-button
-                      v-else-if="scope.row.key_state === 'Active' && canDeactivate(scope.row)"
+                      v-else-if="scope.row.key_state === 'Active'"
                       type="warning"
                       size="small"
                       plain
