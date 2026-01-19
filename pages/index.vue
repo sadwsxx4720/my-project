@@ -55,7 +55,7 @@
                     <el-tag 
                       v-if="getUserRole(project)" 
                       size="small" 
-                      :type="getUserRole(project) === 'admin' ? 'danger' : ''"
+                      :type="getUserRole(project) === 'admin' ? 'danger' : undefined"
                       effect="plain"
                     >
                       {{ getUserRole(project)?.toUpperCase() }}

@@ -156,6 +156,7 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Back, Plus, Refresh, UploadFilled } from '@element-plus/icons-vue';
 import { ElMessage, type UploadInstance, type UploadProps, type UploadUserFile } from 'element-plus';
+import type { UploadRawFile } from 'element-plus'
 import axios from 'axios';
 
 // --- Setup ---
@@ -348,7 +349,8 @@ const handleGcpFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) =
 
 const handleGcpExceed: UploadProps['onExceed'] = (files) => {
   uploadRef.value!.clearFiles();
-  uploadRef.value!.handleStart(files[0] as UploadUserFile);
+  // 使用 UploadRawFile 才是 handleStart 真正預期的輸入類型
+  uploadRef.value!.handleStart(files[0] as UploadRawFile);
 };
 
 const isSubmitDisabled = computed(() => {

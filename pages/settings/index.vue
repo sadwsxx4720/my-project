@@ -194,15 +194,21 @@
                    <el-input v-model="mailForm.subject" placeholder="請輸入信件主旨" size="large" />
                  </el-form-item>
 
-                 <el-form-item label="信件內容">
+                 <el-form-item>
+                   <template #label>
+                     <span>信件內容 (說明部分)</span>
+                     <span style="font-size: 12px; color: #909399; margin-left: 10px;">
+                       (系統將自動在前方加入金鑰ID、專案名稱等固定資訊)
+                     </span>
+                   </template>
+                   
                    <el-input 
                      v-model="mailForm.content" 
                      type="textarea" 
                      :rows="8" 
-                     placeholder="請輸入信件內容模板..." 
+                     placeholder="請輸入「說明：」之後的信件內容..." 
                    />
                  </el-form-item>
-
                  <div class="form-btn-item">
                    <el-button type="primary" size="large" class="save-btn" @click="saveMailSettings">
                      儲存設定
@@ -381,7 +387,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import axios from 'axios'
 import { ElMessage, ElTable, type FormInstance, type FormRules } from 'element-plus'
-import { Bell, Message, Check, Timer, Search, ChatLineRound } from '@element-plus/icons-vue' // 新增 ChatLineRound Icon
+import { Bell, Message, Check, Timer, Search, ChatLineRound } from '@element-plus/icons-vue' 
 
 definePageMeta({
   layout: 'default'
@@ -390,6 +396,10 @@ definePageMeta({
 const router = useRouter()
 const auth = useAuthStore()
 const memberTableRef = ref<InstanceType<typeof ElTable>>()
+
+// 【修改開始】：定義固定前綴常數
+const MAIL_CONTENT_PREFIX = `⚠️ 金鑰狀態異動通知\n金鑰ID：{key_id}\n專案名稱：{codename}\n金鑰描述：{key_description}\n異動類型：{action_type}\n金鑰所屬帳號：{source}\n金鑰剩餘天數：{remaining_days}\n說明：`
+// 【修改結束】
 
 // --- State ---
 const rotationForm = ref({ days: 365 }) 
@@ -406,7 +416,7 @@ const mailForm = ref({
 const loadingTelegramSettings = ref(false)
 const telegramForm = ref({
   token: '',
-  chat_id: '' // 使用字串綁定 input，送出時轉數字
+  chat_id: '' 
 })
 
 // --- Project Members State ---
@@ -435,12 +445,10 @@ const emailForm = reactive({
 const currentCodename = computed(() => auth.currentSelectedCodename)
 const currentUsername = computed(() => auth.user?.username)
 
-// 判斷是否擁有編輯權限 (Superuser 或 Project Admin)
 const canEdit = computed(() => {
   return auth.isSuperuser || currentProjectRole.value === 'admin'
 })
 
-// 篩選使用者下拉選單
 const filterUserOptions = computed(() => {
   return combinedList.value.map(m => ({
     label: m.username || m.email,
@@ -448,11 +456,9 @@ const filterUserOptions = computed(() => {
   }))
 })
 
-// 篩選後顯示的列表
 const displayedMembers = computed(() => {
   let members = combinedList.value
 
-  // 1. 搜尋過濾
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     members = members.filter(m => 
@@ -462,12 +468,10 @@ const displayedMembers = computed(() => {
     )
   }
 
-  // 2. 使用者下拉選單過濾
   if (userFilter.value && userFilter.value !== 'all') {
     members = members.filter(m => m.email === userFilter.value)
   }
 
-  // 3. 角色下拉選單過濾
   if (roleFilter.value && roleFilter.value !== 'all') {
     members = members.filter(m => m.projectrole === roleFilter.value)
   }
@@ -475,7 +479,6 @@ const displayedMembers = computed(() => {
   return members
 })
 
-// Email 表單驗證
 const isEmailFormValid = computed(() => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   return (
@@ -562,7 +565,6 @@ const preventNonNumericInput = (e: KeyboardEvent) => {
   }
 }
 
-// 勾選權限控制
 const checkSelectable = (row: any) => {
   return canEdit.value
 }
@@ -598,8 +600,8 @@ const fetchProjectMembers = async (codename: string) => {
     const token = localStorage.getItem('auth_token')
     const res = await axios.post('http://localhost:8000/projects/get_one', 
       { codename: codename },
-      { headers: { Authorization: `Bearer ${token}` } }
-    )
+      { headers: { Authorization: `Bearer ${token}` }
+    })
 
     if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
       const data = res.data.data
@@ -610,7 +612,6 @@ const fetchProjectMembers = async (codename: string) => {
       const myInfo = projectInfo.value.find((m: any) => m.username === currentUsername.value)
       currentProjectRole.value = myInfo ? myInfo.projectrole : 'viewer'
 
-      // 整合資料
       const tempList: any[] = []
       
       projectInfo.value.forEach(member => {
@@ -656,6 +657,7 @@ const handleSelectionChange = (val: any[]) => {
   selectedMembers.value = val
 }
 
+// 【修改開始】：讀取設定，只截取「說明：」之後的內容顯示
 const fetchMailSettings = async () => {
   loadingMailSettings.value = true
   try {
@@ -666,11 +668,26 @@ const fetchMailSettings = async () => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
       const data = res.data.data
+      
+      // 處理內容切割
+      const rawContent = data.content || ''
+      const separator = '說明：'
+      const splitIndex = rawContent.indexOf(separator)
+      
+      let editableContent = ''
+      if (splitIndex !== -1) {
+          // 只顯示分隔符號後面的內容
+          editableContent = rawContent.substring(splitIndex + separator.length)
+      } else {
+          // 如果格式不符（可能舊資料），為了避免資料遺失，暫時顯示全部，或者您可以決定是否清空
+          editableContent = rawContent
+      }
+
       mailForm.value = {
         sender: data.mail_sender || '',
         smtp_pwd: data.smtp_pwd || '',
         subject: data.subject || '',
-        content: data.content || ''
+        content: editableContent // 只顯示說明後的部分
       }
     }
   } catch (error) {
@@ -679,10 +696,8 @@ const fetchMailSettings = async () => {
     loadingMailSettings.value = false
   }
 }
+// 【修改結束】
 
-// ------------------------------------
-// Telegram Settings API Logic
-// ------------------------------------
 const fetchTelegramSettings = async () => {
   loadingTelegramSettings.value = true
   try {
@@ -709,7 +724,6 @@ const fetchTelegramSettings = async () => {
 const saveTelegramSettings = async () => {
   try {
     const token = localStorage.getItem('auth_token')
-    // 將 chat_id 轉換為數字格式
     const payload = {
       token: telegramForm.value.token,
       chat_id: Number(telegramForm.value.chat_id)
@@ -761,14 +775,19 @@ const saveRotationSettings = async () => {
   }
 }
 
+// 【修改開始】：儲存時，將固定前綴與使用者輸入內容合併
 const saveMailSettings = async () => {
   try {
     const token = localStorage.getItem('auth_token')
+    
+    // 組合固定前綴 + 使用者輸入 (即使 input 是空的，前綴也會被保留)
+    const fullContent = MAIL_CONTENT_PREFIX + mailForm.value.content
+
     const payload = {
       mail_sender: mailForm.value.sender,
       smtp_pwd: mailForm.value.smtp_pwd,
       subject: mailForm.value.subject,
-      content: mailForm.value.content
+      content: fullContent 
     }
 
     await axios.post('http://localhost:8000/mail_sender/update', payload, {
@@ -781,6 +800,7 @@ const saveMailSettings = async () => {
     ElMessage.error('儲存信件設定失敗')
   }
 }
+// 【修改結束】
 
 watch(currentCodename, (newCode) => {
   if (newCode) {
@@ -794,13 +814,14 @@ watch(currentCodename, (newCode) => {
 onMounted(() => {
   if (auth.isSuperuser) {
     fetchMailSettings()
-    fetchTelegramSettings() // 新增：讀取 Telegram 設定
+    fetchTelegramSettings() 
   }
 })
 
 </script>
 
 <style scoped>
+/* (樣式部分未變動，省略重複內容以節省空間) */
 /* CSS 禁用表頭全選框：滑鼠點擊無效 + 灰色透明感 */
 .disable-header-checkbox :deep(.el-table__header-wrapper .el-table-column--selection .el-checkbox) {
   pointer-events: none;

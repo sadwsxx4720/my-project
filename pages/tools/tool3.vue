@@ -320,7 +320,7 @@ const drawAgeChart = (ctx: ChartItem, ageData: Record<string, number>): void => 
     }
 
     const data: ChartData<'bar'> = { labels: Object.keys(ageData), datasets: [{ label: '金鑰數量', data: Object.values(ageData), backgroundColor: ['#85C1E9', '#F8C471', '#F1948A'], borderColor: ['#3498DB', '#F39C12', '#E74C3C'], borderWidth: 1 }] };
-    const options: ChartOptions<'bar'> = { ...commonChartOptions, plugins: { title: { display: true, text: '金鑰建立天數分佈' }, legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: '金鑰數量' }, grid: { borderDash: [2, 4], color: '#D0D0D0' } }, x: { title: { display: true, text: '天數區間' } } } };
+    const options: ChartOptions<'bar'> = { ...commonChartOptions, plugins: { title: { display: true, text: '金鑰建立天數分佈' }, legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: '金鑰數量' }, grid: { borderDash: [2, 4] , color: '#D0D0D0' } } as any, x: { title: { display: true, text: '天數區間' } } } };
     mainChart = new Chart(ctx, { type: 'bar', data, options });
 };
 
@@ -336,12 +336,12 @@ const drawUsageChart = (ctx: ChartItem, usageChartData: { x: string; y: number }
     const maxDays = Math.max(...usageChartData.map(d => d.y), 0) || 1;
     const backgroundColors = usageChartData.map(d => `hsl(210, 50%, ${90 - (d.y / maxDays * 60)}%)`);
     const borderColors = usageChartData.map(d => `hsl(210, 60%, ${80 - (d.y / maxDays * 60)}%)`);
-    const data: ChartData<'scatter'> = { datasets: [{ label: '距離上次使用天數', data: usageChartData, backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 2, pointRadius: 8, pointHoverRadius: 10 }] };
+    const data: ChartData<'scatter'> = { datasets: [{ label: '距離上次使用天數', data: usageChartData as any, backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 2, pointRadius: 8, pointHoverRadius: 10 }] };
     const options: ChartOptions<'scatter'> = {
         ...commonChartOptions,
         plugins: { title: { display: true, text: '金鑰活躍度 (點陣圖)' }, legend: { display: false } },
         scales: {
-          y: { beginAtZero: true, title: { display: true, text: '距離上次使用天數' }, grid: { borderDash: [2, 4], color: '#D0D0D0' } },
+          y: { beginAtZero: true, title: { display: true, text: '距離上次使用天數' }, grid: { borderDash: [2, 4] as number[], color: '#D0D0D0' } as any },
           x: {
             type: 'category', title: { display: true, text: '金鑰 ID' }, grid: { display: false }, offset: true,
             ticks: {

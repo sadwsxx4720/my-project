@@ -22,11 +22,14 @@ interface KeyData {
   key_state: string; // 'Active' | 'Disabled'
   key_description: string;
   codename: string;
+  remaining_days?: string; // 剩餘天數
   rotation_state: string;
   cloud_type: 'AWS' | 'GCP' | string;
   user_account?: string; 
-  source?: string;       // 新增：來源
-  old_key?: string | null; // 新增：舊金鑰 ID
+  source?: string;       // 來源
+  old_key?: string | null; // 舊金鑰 ID
+  children?: KeyData[]; // 用於樹狀結構的子節點
+  isNested?: boolean;   // 標記是否成功被巢狀縮排 (用於控制箭頭顯示)
 }
 
 // --- State ---
@@ -180,7 +183,7 @@ const canManageKeys = computed(() => {
   return auth.isSuperuser || currentUserProjectRole.value === 'admin';
 })
 
-// 過濾邏輯
+// 過濾邏輯 (平面資料)
 const filteredData = computed(() => {
   const currentCode = auth.currentSelectedCodename;
   const allowedUserCodes = auth.availableCodename;
@@ -224,8 +227,9 @@ const filteredData = computed(() => {
         safeStr(key.key_type),
         safeStr(key.key_state),
         safeStr(key.rotation_state),
-        safeStr(key.source),    // 新增搜尋來源
-        safeStr(key.old_key),   // 新增搜尋舊金鑰
+        safeStr(key.remaining_days),
+        safeStr(key.source),    // 搜尋來源
+        safeStr(key.old_key),   // 搜尋舊金鑰
         formatDate(key.key_create_time).toLowerCase(),
         formatDate(key.key_last_time_used).toLowerCase()
       ];
@@ -234,6 +238,41 @@ const filteredData = computed(() => {
 
     return true;
   });
+});
+
+// 【修改】樹狀結構轉換邏輯：判斷是否真的被巢狀縮排 (isNested)
+const treeData = computed(() => {
+  // 1. 深拷貝並初始化屬性
+  const data = filteredData.value.map(item => ({ 
+    ...item, 
+    children: [] as KeyData[],
+    isNested: false // 初始化為 false
+  }));
+  
+  const dataMap: Record<string, any> = {};
+  
+  // 2. 建立索引 Map
+  data.forEach(item => {
+    dataMap[item.key_id] = item;
+  });
+
+  const tree: KeyData[] = [];
+
+  // 3. 組裝樹狀結構
+  data.forEach(item => {
+    // 檢查是否有 old_key 並且 父節點存在於目前的清單中
+    if (item.old_key && dataMap[item.old_key]) {
+      // 父節點存在 -> 標記為 Nested，並放入父節點的 children
+      item.isNested = true;
+      dataMap[item.old_key].children.push(item);
+    } else {
+      // 父節點不存在 (被刪除或被過濾) 或 沒有 old_key -> 視為頂層節點，isNested 維持 false
+      item.isNested = false;
+      tree.push(item);
+    }
+  });
+
+  return tree;
 });
 
 // 狀態切換 (Update) -> /cloud_platform/{type}/iam/update
@@ -546,34 +585,45 @@ watch(() => auth.currentSelectedCodename, async () => {
       <div class="table-container">
         <el-table 
           v-loading="loading" 
-          :data="filteredData" 
+          :data="treeData" 
           style="width: 100%" 
           border 
           stripe
           table-layout="auto"
+          row-key="key_id" 
+          default-expand-all
+          :indent="0"
+          :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
         >
           
           <el-table-column prop="cloud_type" label="雲平台" width="100" sortable align="center">
             <template #default="scope">
-              <el-tag effect="light" :type="scope.row.cloud_type === 'AWS' ? 'warning' : ''">
+              <el-tag effect="light" :type="scope.row.cloud_type === 'AWS' ? 'warning' : undefined">
                 {{ scope.row.cloud_type || '-' }}
               </el-tag>
             </template>
           </el-table-column>
 
-          <el-table-column prop="key_id" label="金鑰 ID" min-width="450" />
+          <el-table-column prop="key_id" label="金鑰 ID" min-width="450">
+            <template #default="scope">
+               <span v-if="scope.row.isNested" style="color: #909399; margin-right: 5px; font-weight: bold; font-size: 16px;">
+                 ↳
+               </span>
+               {{ scope.row.key_id }}
+            </template>
+          </el-table-column>
           
           <el-table-column prop="key_type" label="類型" width="100" align="center">
              <template #default="scope">
-                 <el-tag :type="scope.row.key_type === 'Parent' ? 'warning' : ''" effect="plain">
+                 <el-tag :type="scope.row.key_type === 'Parent' ? 'warning' : undefined" effect="plain">
                    {{ scope.row.key_type || 'Unknown' }}
                  </el-tag>
              </template>
           </el-table-column>
 
-          <el-table-column prop="codename" label="專案代號" width="120" sortable />
+          <el-table-column prop="codename" label="專案代號" width="120" align="center" sortable />
           
-          <el-table-column prop="source" label="來源" width="120" sortable show-overflow-tooltip>
+          <el-table-column prop="source" label="雲平台使用者帳號" width="120" sortable show-overflow-tooltip>
              <template #default="scope">
                  {{ scope.row.source || '-' }}
              </template>
@@ -588,6 +638,14 @@ watch(() => auth.currentSelectedCodename, async () => {
           </el-table-column>
 
           <el-table-column prop="rotation_state" label="輪替狀態" width="120" align="center" />
+
+          <el-table-column prop="remaining_days" label="剩餘天數" width="100" sortable align="center">
+            <template #default="scope">
+              <span :style="{ color: (scope.row.remaining_days !== undefined && scope.row.remaining_days < 7) ? 'red' : 'inherit' }">
+                {{ scope.row.remaining_days !== undefined ? scope.row.remaining_days + ' 天' : '-' }}
+              </span>
+            </template>
+          </el-table-column>
           
           <el-table-column prop="old_key" label="上一代金鑰" width="200" show-overflow-tooltip>
              <template #default="scope">
