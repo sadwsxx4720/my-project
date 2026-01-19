@@ -131,14 +131,14 @@ onMounted(fetchKeyDetails)
         </div>
 
          <div style="margin-top: 20px; text-align: center;">
-            <el-button @click="router.push('/tools/tool1')">返回列表</el-button>
+            <el-button @click="router.push('/clouds')">返回列表</el-button>
          </div>
 
       </div>
 
       <div v-else>
         <p>找不到指定的金鑰資訊或獲取失敗</p>
-        <el-button @click="router.push('/tools/tool1')">返回列表</el-button>
+        <el-button @click="router.push('/clouds')">返回列表</el-button>
       </div>
     </el-card>
   </div>

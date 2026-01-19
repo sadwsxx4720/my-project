@@ -3,7 +3,7 @@
     
     <div class="page-header">
       <div class="left-section">
-        <el-button link @click="goBack" class="back-btn">
+        <el-button link @click="goBackToList" class="back-btn">
           <el-icon :size="20"><Back /></el-icon>
           <span class="back-text">返回專案列表</span>
         </el-button>
@@ -54,7 +54,7 @@
         <el-table-column label="操作" width="150" align="center">
           <template #default="scope">
             <el-button
-              v-if="scope.row.key_state === 'Active' && canDeactivate(scope.row)"
+              v-if="scope.row.key_state === 'Active'"
               type="danger"
               size="small"
               plain
@@ -184,15 +184,16 @@ onMounted(async () => {
 
   if (!projectCodename.value) {
     ElMessage.error('無效的專案代號，將返回列表');
-    router.push('/project'); 
+    router.push('/project'); // 明確指定回到 index
     return;
   }
 
   await loadKeyDetails();
 });
 
-const goBack = () => {
-  router.push('/project'); 
+const goBackToList = () => {
+  // 使用原生 JS 強制導向，這會確保頁面完整重新整理並載入列表頁
+  window.location.href = '/project';
 };
 
 // --- Core Logic: Load & Enrich Data ---
