@@ -612,7 +612,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 
                 <div v-if="canManageKeys" style="margin-right: 5px;">
                     <el-button
-                      v-if="scope.row.key_state === 'Disabled'"
+                      v-if="scope.row.key_state === 'Disabled' && (auth.isSuperuser || scope.row.key_type === 'Child')"
                       type="success"
                       size="small"
                       plain
@@ -623,7 +623,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                     </el-button>
 
                     <el-button
-                      v-else-if="scope.row.key_state === 'Active'"
+                      v-else-if="scope.row.key_state === 'Active' && (auth.isSuperuser || scope.row.key_type === 'Child')"
                       type="warning"
                       size="small"
                       plain
