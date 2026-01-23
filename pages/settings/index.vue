@@ -607,7 +607,9 @@ const fetchProjectMembers = async (codename: string) => {
       const data = res.data.data
       projectInfo.value = data.projectinfo || []
       mailReceivers.value = (data.mailreceivers || []).map((m: any) => m.email) 
-      rotationForm.value.days = data.rotation || 365
+      
+      // 【修改重點】：從 API 回傳的 data 中取得 rotation 值，若無則預設 365
+      rotationForm.value.days = (data.rotation !== undefined && data.rotation !== null) ? data.rotation : 365
       
       const myInfo = projectInfo.value.find((m: any) => m.username === currentUsername.value)
       currentProjectRole.value = myInfo ? myInfo.projectrole : 'viewer'
@@ -821,7 +823,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* (樣式部分未變動，省略重複內容以節省空間) */
 /* CSS 禁用表頭全選框：滑鼠點擊無效 + 灰色透明感 */
 .disable-header-checkbox :deep(.el-table__header-wrapper .el-table-column--selection .el-checkbox) {
   pointer-events: none;
