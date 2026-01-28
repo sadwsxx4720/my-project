@@ -86,6 +86,29 @@ const downloadBlob = (data: Blob, defaultFilename: string, headers: any) => {
     window.URL.revokeObjectURL(downloadUrl);
 }
 
+// --- Helper: 解析 Blob 內容以產生動態檔名 ---
+const getDynamicFilename = async (blob: Blob, defaultName: string) => {
+  try {
+    const text = await blob.text();
+    const data = JSON.parse(text);
+    let keyId = '';
+
+    if (data.AccessKeyId) {
+      keyId = data.AccessKeyId;
+    } else if (data.private_key_id) {
+      keyId = data.private_key_id;
+    }
+
+    if (keyId && keyId.length >= 4) {
+      const suffix = keyId.slice(-4);
+      return `credentials(${suffix}).json`;
+    }
+  } catch (e) {
+    console.warn('解析 Blob 以產生檔名時發生錯誤，將使用預設檔名', e);
+  }
+  return defaultName;
+}
+
 // --- API Functions ---
 
 const fetchKeys = async () => {
@@ -98,7 +121,6 @@ const fetchKeys = async () => {
       return
     }
     
-    // 加上時間戳記防止快取
     const res = await axios.get(`http://localhost:8000/keys/get_all?t=${new Date().getTime()}`, {
       headers: { Authorization: `Bearer ${savedToken}` }
     })
@@ -127,17 +149,17 @@ const handleUpdateData = async () => {
       return
     }
 
-    const headers = { Authorization: `Bearer ${savedToken}` }
     const timestamp = new Date().getTime()
+    const currentCodename = auth.currentSelectedCodename; 
+    const headers = { Authorization: `Bearer ${savedToken}` }
 
-    // 同時呼叫 AWS Summary, GCP Summary
     await Promise.allSettled([
-      axios.get(`http://localhost:8000/cloud_platform/summary?t=${timestamp}`, { headers })
+      axios.post(`http://localhost:8000/cloud_platform/summary?t=${timestamp}`,
+      { codename: currentCodename },
+      { headers })
     ])
     
-    // 重新獲取金鑰列表
     await fetchKeys()
-    
     ElMessage.success('資料更新完成')
 
   } catch (err) {
@@ -179,8 +201,19 @@ const fetchCurrentUserProjectRole = async () => {
 
 // --- Computed Properties ---
 
+// 一般管理權限 (Admin 或 Superuser)
 const canManageKeys = computed(() => {
   return auth.isSuperuser || currentUserProjectRole.value === 'admin';
+})
+
+// 【修正部分】: 專門給 Parent Key 的管理權限 (只有 Superuser 有)
+const canManageParentKeys = computed(() => {
+  return auth.isSuperuser; 
+})
+
+// 【修正部分】: 判斷是否為專案 Admin
+const isProjectAdmin = computed(() => {
+  return currentUserProjectRole.value === 'admin';
 })
 
 // 過濾邏輯 (平面資料)
@@ -195,7 +228,6 @@ const filteredData = computed(() => {
   const typeFilter = cloudTypeFilter.value;
 
   return keyList.value.filter(key => {
-    // 1. 專案代號篩選
     const keyCodename = key.codename || '';
     let codenameMatch = false;
 
@@ -210,12 +242,10 @@ const filteredData = computed(() => {
     
     if (!codenameMatch) return false;
 
-    // 2. 雲平台篩選
     if (typeFilter !== 'all' && key.cloud_type !== typeFilter) {
       return false;
     }
 
-    // 3. 全欄位搜尋
     if (query) {
       const safeStr = (val: any) => (val || '').toString().toLowerCase();
       const searchContent = [
@@ -228,8 +258,8 @@ const filteredData = computed(() => {
         safeStr(key.key_state),
         safeStr(key.rotation_state),
         safeStr(key.remaining_days),
-        safeStr(key.source),    // 搜尋來源
-        safeStr(key.old_key),   // 搜尋舊金鑰
+        safeStr(key.source),
+        safeStr(key.old_key),
         formatDate(key.key_create_time).toLowerCase(),
         formatDate(key.key_last_time_used).toLowerCase()
       ];
@@ -240,33 +270,26 @@ const filteredData = computed(() => {
   });
 });
 
-// 【修改】樹狀結構轉換邏輯：判斷是否真的被巢狀縮排 (isNested)
 const treeData = computed(() => {
-  // 1. 深拷貝並初始化屬性
   const data = filteredData.value.map(item => ({ 
     ...item, 
     children: [] as KeyData[],
-    isNested: false // 初始化為 false
+    isNested: false
   }));
   
   const dataMap: Record<string, any> = {};
   
-  // 2. 建立索引 Map
   data.forEach(item => {
     dataMap[item.key_id] = item;
   });
 
   const tree: KeyData[] = [];
 
-  // 3. 組裝樹狀結構
   data.forEach(item => {
-    // 檢查是否有 old_key 並且 父節點存在於目前的清單中
     if (item.old_key && dataMap[item.old_key]) {
-      // 父節點存在 -> 標記為 Nested，並放入父節點的 children
       item.isNested = true;
       dataMap[item.old_key].children.push(item);
     } else {
-      // 父節點不存在 (被刪除或被過濾) 或 沒有 old_key -> 視為頂層節點，isNested 維持 false
       item.isNested = false;
       tree.push(item);
     }
@@ -275,7 +298,7 @@ const treeData = computed(() => {
   return tree;
 });
 
-// 狀態切換 (Update) -> /cloud_platform/{type}/iam/update
+// 狀態切換
 const handleToggleState = async (row: KeyData) => {
   if (updatingStateMap.value[row.key_id]) return;
 
@@ -300,7 +323,7 @@ const handleToggleState = async (row: KeyData) => {
     const payload = {
       codename: row.codename,
       key_id: row.key_id,
-      key_state: currentState // 傳送目前狀態，後端負責切換
+      key_state: currentState 
     };
 
     const res = await axios.post(url, payload, {
@@ -309,7 +332,6 @@ const handleToggleState = async (row: KeyData) => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        ElMessage.success(`金鑰已${actionText}`);
-       // 前端先暫時更新狀態，隨後會 reload
        row.key_state = currentState === 'Active' ? 'Disabled' : 'Active';
        await fetchKeys(); 
     } else {
@@ -327,7 +349,6 @@ const handleToggleState = async (row: KeyData) => {
 // Parent(Active) -> 新增 Parent
 // Child(Active) -> 新增 Child
 const handleRotateKey = async (row: KeyData) => {
-  // 判斷要新增的類型 (跟隨 row 本身的類型)
   const targetKeyType = row.key_type; 
   const typeLabel = targetKeyType === 'Parent' ? 'Parent Key' : 'Child Key';
 
@@ -350,7 +371,7 @@ const handleRotateKey = async (row: KeyData) => {
 
     const payload = {
       codename: row.codename,
-      key_type: targetKeyType, // 動態帶入 Parent 或 Child
+      key_type: targetKeyType, 
       old_key_id: row.key_id
     };
 
@@ -360,7 +381,8 @@ const handleRotateKey = async (row: KeyData) => {
     });
 
     if (res.status === 200) {
-       downloadBlob(res.data, 'credentials.json', res.headers);
+       const filename = await getDynamicFilename(res.data, 'credentials.json');
+       downloadBlob(res.data, filename, res.headers);
        ElMessage.success('金鑰新增成功，正在下載憑證檔案...');
        await fetchKeys();
     } else {
@@ -370,13 +392,18 @@ const handleRotateKey = async (row: KeyData) => {
   } catch (err: any) {
     if (err === 'cancel') return;
     console.error(err);
-    // Blob 錯誤處理
     if (err.response && err.response.data instanceof Blob) {
         const reader = new FileReader();
         reader.onload = () => {
             try {
                 const errorData = JSON.parse(reader.result as string);
-                ElMessage.error(errorData.detail || errorData.message || '新增金鑰失敗');
+                const errorMsg = errorData.detail || errorData.message || '';
+                
+                if (typeof errorMsg === 'string' && errorMsg.includes('User already has 2 access key')) {
+                    ElMessage.error('目前已有兩把AWS Access key 無法新增母key');
+                } else {
+                    ElMessage.error(errorMsg || '新增金鑰失敗');
+                }
             } catch (e) {
                 ElMessage.error('新增金鑰發生未預期的錯誤');
             }
@@ -392,23 +419,27 @@ const handleRotateKey = async (row: KeyData) => {
 
 // 開啟 First Create Modal
 const handleOpenFirstCreateDialog = () => {
-  // 檢查是否選擇了專案
   const currentCode = auth.currentSelectedCodename;
   if (!currentCode || currentCode === 'all') {
     ElMessage.warning('請先在右上角選擇一個特定的專案 (Codename) 才能進行首次新增金鑰');
     return;
   }
 
-  // 初始化表單
   firstCreateForm.codename = currentCode;
-  firstCreateForm.cloud_type = ''; // 讓使用者選
+  firstCreateForm.cloud_type = ''; 
   firstCreateForm.account = '';
-  firstCreateForm.key_type = '';   // 讓使用者選
+  
+  // 【修正部分】: 如果是 Admin，預設選擇 'Child'；否則清空讓使用者選
+  if (isProjectAdmin.value) {
+    firstCreateForm.key_type = 'Child';
+  } else {
+    firstCreateForm.key_type = '';   
+  }
   
   firstCreateDialogVisible.value = true;
 }
 
-// 送出 First Create -> /cloud_platform/{type}/iam/firstcreate
+// 送出 First Create
 const submitFirstCreateKey = async () => {
   if (!isFirstCreateFormValid.value) {
     ElMessage.warning('請填寫完整資訊');
@@ -438,7 +469,9 @@ const submitFirstCreateKey = async () => {
     });
 
     if (res.status === 200) {
-      downloadBlob(res.data, 'credentials.json', res.headers);
+      const filename = await getDynamicFilename(res.data, 'credentials.json');
+      downloadBlob(res.data, filename, res.headers);
+      
       ElMessage.success('金鑰首次新增成功，正在下載憑證檔案...');
       firstCreateDialogVisible.value = false;
       await fetchKeys();
@@ -453,7 +486,12 @@ const submitFirstCreateKey = async () => {
         reader.onload = () => {
             try {
                 const errorData = JSON.parse(reader.result as string);
-                ElMessage.error(errorData.detail || errorData.message || '新增金鑰失敗');
+                const errorMsg = errorData.detail || errorData.message || '';
+                if (typeof errorMsg === 'string' && errorMsg.includes('User already has 2 access key')) {
+                    ElMessage.error('目前已有兩把AWS Access key 無法新增母key');
+                } else {
+                    ElMessage.error(errorMsg || '新增金鑰失敗');
+                }
             } catch (e) {
                 ElMessage.error('新增金鑰發生未預期的錯誤');
             }
@@ -467,7 +505,6 @@ const submitFirstCreateKey = async () => {
   }
 }
 
-// 刪除金鑰
 const handleDeleteKey = async (row: KeyData) => {
   try {
     await ElMessageBox.confirm(
@@ -482,16 +519,10 @@ const handleDeleteKey = async (row: KeyData) => {
 
     if (row.cloud_type === 'AWS') {
       url = 'http://localhost:8000/cloud_platform/aws/iam/delete';
-      payload = {
-        codename: row.codename,
-        key_id: row.key_id
-      };
+      payload = { codename: row.codename, key_id: row.key_id };
     } else if (row.cloud_type === 'GCP') {
       url = 'http://localhost:8000/cloud_platform/gcp/iam/delete';
-      payload = {
-        codename: row.codename,
-        key_id: row.key_id
-      };
+      payload = { codename: row.codename, key_id: row.key_id };
     }
 
     const res = await axios.post(url, payload, { 
@@ -518,7 +549,6 @@ const formatDate = (dateString: string | null | undefined): string => {
     catch (e) { return '-'; }
 };
 
-// --- Lifecycle & Watchers ---
 onMounted(async () => {
   await fetchKeys();
   await fetchCurrentUserProjectRole();
@@ -694,7 +724,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 <span v-else style="margin-right: 5px; color: #ccc;">-</span>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Parent' && canManageKeys && scope.row.key_state === 'Active'"
+                  v-if="scope.row.key_type === 'Parent' && canManageParentKeys && scope.row.key_state === 'Active'"
                   size="small"
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
@@ -714,13 +744,23 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Child' && scope.row.key_state === 'Disabled' && canManageKeys"
+                  v-if="canManageKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Child'"
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
                 >
                   刪除金鑰
                 </el-button>
+
+                <el-button
+                  v-if="canManageParentKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Parent' && scope.row.children && scope.row.children.length > 0"
+                  size="small"
+                  type="danger"
+                  @click="handleDeleteKey(scope.row)"
+                >
+                  刪除金鑰
+                </el-button>
+
               </div>
             </template>
           </el-table-column>
@@ -750,7 +790,12 @@ watch(() => auth.currentSelectedCodename, async () => {
         </el-form-item>
 
         <el-form-item label="要新增的金鑰類型" required>
-          <el-select v-model="firstCreateForm.key_type" placeholder="請選擇金鑰類型" style="width: 100%">
+          <el-select 
+            v-model="firstCreateForm.key_type" 
+            placeholder="請選擇金鑰類型" 
+            style="width: 100%"
+            :disabled="isProjectAdmin"
+          >
             <el-option label="Parent (母Key)" value="Parent" />
             <el-option label="Child (子Key)" value="Child" />
           </el-select>

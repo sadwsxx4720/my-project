@@ -106,14 +106,22 @@ const handleUpdateData = async () => {
       return
     }
 
-    const headers = { Authorization: `Bearer ${savedToken}` }
+    // 1. 取得目前的 Codename
+    const currentCodename = auth.currentSelectedCodename || '';
 
+    const headers = { Authorization: `Bearer ${savedToken}` }
+    const timestamp = new Date().getTime()
+
+    // 2. 改用 POST 方法呼叫 summary，並傳遞 { codename: string }
     await Promise.allSettled([
-      axios.get('http://localhost:8000/cloud_platform/aws/iam/summary', { headers }),
-      axios.get('http://localhost:8000/cloud_platform/gcp/iam/summary', { headers })
+      axios.post(
+        `http://localhost:8000/cloud_platform/summary?t=${timestamp}`, 
+        { codename: currentCodename }, // Body
+        { headers } // Config
+      )
     ])
     
-    ElMessage.success('已完成資料更新請求，正在重新整理列表...')
+    ElMessage.success('已完成資料更新')
     await fetchCloudServices()
 
   } catch (err) {

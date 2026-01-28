@@ -254,7 +254,7 @@ const loadKeyDetails = async () => {
   }
 };
 
-// --- Core Logic: Update State (已依需求修正 API 與 Payload) ---
+// --- Core Logic: Update State ---
 const handleToggleState = async (row: any) => {
   if (updatingStateId.value) return;
 
@@ -358,20 +358,22 @@ const isSubmitDisabled = computed(() => {
   return bindForm.platform === 'AWS' ? !bindForm.secretKey : !bindForm.jsonContent;
 });
 
+// 【修改】 submitBindKey：符合後端 { codename, mainkey: { key_id, key_info } } 格式
 const submitBindKey = async () => {
   submittingBindKey.value = true;
   try {
     const token = localStorage.getItem('auth_token');
     
-    // 準備新的 Key (GCP 時 keyId 已經由 JSON 解析填入)
+    // 準備新的 Key 資訊
     let finalKeyInfo = bindForm.platform === 'AWS' ? bindForm.secretKey : bindForm.jsonContent;
-    const newKey = { key_id: bindForm.keyId, key_info: finalKeyInfo };
     
-    const updatedMainKeys = [...rawMainKeys.value, newKey];
-
+    // 修改處：不使用陣列，而是只傳送單一個 mainkey 物件
     const payload = {
       codename: projectCodename.value,
-      mainkeys: updatedMainKeys
+      mainkey: {
+        key_id: bindForm.keyId,
+        key_info: finalKeyInfo
+      }
     };
 
     const res = await axios.post('http://localhost:8000/projects/update_mainkey', payload, {
@@ -380,7 +382,7 @@ const submitBindKey = async () => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        
-       // 同步呼叫 Summary API
+       // 同步呼叫 Summary API (POST + {codename})
        try {
          await axios.post('http://localhost:8000/cloud_platform/summary', 
            { codename: projectCodename.value }, 
