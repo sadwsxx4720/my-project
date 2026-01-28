@@ -538,7 +538,8 @@ const selectedViewers = ref<ApiUser[]>([]);
 
 // Available Users for Admin Step (With Filter)
 const availableUsers = computed(() => {
-  let users = allApiUsers.value;
+  // 【修改】篩選掉 superuser
+  let users = allApiUsers.value.filter(u => u.role !== 'superuser');
   if (searchAdminQuery.value) {
     const q = searchAdminQuery.value.toLowerCase();
     users = users.filter(u => u.username.toLowerCase().includes(q));
@@ -549,7 +550,8 @@ const availableUsers = computed(() => {
 // Available Users for Viewer Step (With Filter + Exclude Admins)
 const availableViewers = computed(() => {
   const adminUsernames = selectedAdmins.value.map(u => u.username);
-  let users = allApiUsers.value.filter(u => !adminUsernames.includes(u.username));
+  // 【修改】篩選掉 superuser 並排除已選的 admins
+  let users = allApiUsers.value.filter(u => u.role !== 'superuser' && !adminUsernames.includes(u.username));
   if (searchViewerQuery.value) {
     const q = searchViewerQuery.value.toLowerCase();
     users = users.filter(u => u.username.toLowerCase().includes(q));
@@ -670,7 +672,8 @@ const backToList = async () => {
 const usersNotInProject = computed(() => {
   if (!currentProject.value || allApiUsers.value.length === 0) return [];
   const currentMemberUsernames = currentProject.value.projectinfo.map(m => m.username);
-  return allApiUsers.value.filter(u => !currentMemberUsernames.includes(u.username));
+  // 【修改】篩選掉 superuser 並排除已在專案中的成員
+  return allApiUsers.value.filter(u => u.role !== 'superuser' && !currentMemberUsernames.includes(u.username));
 });
 
 // 2. Filtered List for Admin Table

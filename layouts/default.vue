@@ -1,15 +1,12 @@
 <template>
   <div class="main-layout">
     <el-container>
-      <!-- 頂部 Header -->
       <el-header class="main-header">
         <div class="header-content">
           <div class="left">
             <h1>金鑰管理平台</h1> 
           </div>
           <div class="right">
-            <!-- 專案選擇器 -->
-            <!-- 只要登入就顯示 -->
             <el-select
               v-if="auth.isAuthenticated" 
               v-model="selectedCodenameModel"
@@ -18,14 +15,12 @@
               style="width: 350px; margin-right: 15px;" 
               filterable
             >
-              <!-- Superuser 專屬選項：全部 -->
               <el-option
                 v-if="auth.isSuperuser"
                 label="全部專案"
                 value="all"
               />
 
-              <!-- 使用從 API 獲取的 projectList -->
               <el-option
                 v-for="code in projectList"
                 :key="code"
@@ -34,7 +29,6 @@
               />
             </el-select>
 
-            <!-- 使用者下拉選單 -->
             <el-dropdown>
               <el-button type="primary">
                 {{ auth.user?.username || 'User Name' }}
@@ -44,7 +38,6 @@
                 <el-dropdown-menu>
                   <el-dropdown-item style="justify-content: center;" @click="handleLogout">登出</el-dropdown-item>
                   
-                  <!-- 變更密碼：非 Superuser 才顯示 -->
                   <el-dropdown-item 
                     v-if="!auth.isSuperuser" 
                     style="justify-content: center;"
@@ -60,17 +53,14 @@
       </el-header>
 
       <el-container class="main-container"> 
-        <!-- 左側邊欄 -->
         <el-aside width="220px" class="main-sidebar">
           <el-menu
             :default-active="activeMenu"
             class="main-menu"
             @select="handleMenuSelect"
           >
-            <!-- 常用功能 -->
             <el-menu-item index="home"> <el-icon><House /></el-icon> <span>首頁</span> </el-menu-item>
             
-            <!-- 【需求修改】儀表板：僅 Superuser 顯示 -->
             <el-menu-item 
               v-if="auth.isSuperuser" 
               index="dashboard"
@@ -78,13 +68,11 @@
               <el-icon><Monitor /></el-icon> <span>儀表板</span> 
             </el-menu-item>
             
-            <!-- 金鑰管理模組 -->
             <el-sub-menu index="tool">
               <template #title> <el-icon><Key /></el-icon> <span>金鑰管理模組</span> </template>
               <el-menu-item index="tool1">金鑰清單</el-menu-item>
               <el-menu-item index="tool3">金鑰資訊圖表</el-menu-item>
               
-              <!-- 專案人員管理：非 Superuser 才顯示 -->
               <el-menu-item 
                 v-if="!auth.isSuperuser" 
                 index="tool5"
@@ -93,13 +81,10 @@
               </el-menu-item>
             </el-sub-menu>
 
-            <!-- 帳號管理 -->
             <el-menu-item index="clouds"><el-icon><Cloudy /></el-icon>雲平台清單</el-menu-item>
 
-            <!-- 帳號管理 -->
-              <el-menu-item index="log1"><el-icon><User /></el-icon>帳號操作日誌</el-menu-item>
+            <el-menu-item index="log1"><el-icon><User /></el-icon>帳號操作日誌</el-menu-item>
          
-            <!-- 專案管理：僅 Superuser 顯示 -->
             <el-menu-item 
               v-if="auth.isSuperuser" 
               index="project-manage"
@@ -107,7 +92,6 @@
               <el-icon><Setting /></el-icon> <span>專案管理</span> 
             </el-menu-item>
 
-            <!-- 通知與提醒 -->
             <el-menu-item index="notifications"> 
               <el-icon><Bell /></el-icon> <span>通知與提醒</span> 
             </el-menu-item>
@@ -115,7 +99,6 @@
           </el-menu>
         </el-aside>
 
-        <!-- 主要內容區 -->
         <el-main class="main-content">
           <slot />
         </el-main>
@@ -181,7 +164,8 @@ const selectedCodenameModel = computed({
 });
 
 // --- API Functions ---
-// 透過 users/get_one 獲取使用者專案資訊
+
+// 1. 一般使用者：透過 users/get_one 獲取該使用者底下的專案
 const fetchUserProjects = async () => {
   const username = auth.user?.username;
   if (!username) return;
@@ -194,20 +178,42 @@ const fetchUserProjects = async () => {
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
-    // 同時接受 code 0 或 200 為成功狀態
     if (res.data && (res.data.code === 0 || res.data.code === 200) && res.data.data) {
       const userData = res.data.data;
       if (Array.isArray(userData.projects)) {
-        // 從 projects array 中提取 codename
         projectList.value = userData.projects.map((p: any) => p.codename);
       } else {
         projectList.value = [];
       }
     } else {
       console.warn("API 回傳格式不符或失敗", res.data);
+      projectList.value = [];
     }
   } catch (error) {
     console.error('Failed to fetch user projects:', error);
+    projectList.value = [];
+  }
+};
+
+// 2. 【新增】Superuser：透過 projects/get_all 獲取所有專案
+const fetchAllProjects = async () => {
+  try {
+    const token = localStorage.getItem('auth_token');
+    const res = await axios.get(
+      'http://localhost:8000/projects/get_all',
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (res.data && (res.data.code === 0 || res.data.code === 200) && Array.isArray(res.data.data)) {
+      // 假設回傳結構是專案物件陣列，提取 codename
+      projectList.value = res.data.data.map((p: any) => p.codename);
+    } else {
+      console.warn("API 回傳格式不符或失敗", res.data);
+      projectList.value = [];
+    }
+  } catch (error) {
+    console.error('Failed to fetch all projects:', error);
+    projectList.value = [];
   }
 };
 
@@ -216,9 +222,14 @@ const fetchUserProjects = async () => {
 // 1. 監聽 User Username，登入或切換帳號時重新抓取專案列表
 watch(
   () => auth.user?.username,
-  (newVal) => {
+  async (newVal) => {
     if (newVal) {
-      fetchUserProjects();
+      // 【修改部分】：判斷身分決定要呼叫哪個 API
+      if (auth.isSuperuser) {
+        await fetchAllProjects();
+      } else {
+        await fetchUserProjects();
+      }
     } else {
       projectList.value = []; // 登出清空
     }

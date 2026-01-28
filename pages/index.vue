@@ -2,7 +2,6 @@
   <div class="home-page">
     <el-row :gutter="20">
       
-      <!-- 1. 快速開始 (全寬) -->
       <el-col :span="24" class="mb-4">
         <el-card shadow="hover" class="feature-card">
           <template #header>
@@ -27,7 +26,6 @@
         </el-card>
       </el-col>
 
-      <!-- 2. 我的專案 / 專案概覽 (新增區塊) -->
       <el-col :span="24">
         <el-card shadow="hover" class="projects-card" v-loading="loading">
           <template #header>
@@ -39,7 +37,6 @@
             </div>
           </template>
 
-          <!-- 專案列表 -->
           <div v-if="projects.length > 0" class="project-grid">
             <el-card 
               v-for="project in projects" 
@@ -52,19 +49,28 @@
                   <h4 class="project-name">{{ project.projectname }}</h4>
                   <div class="project-meta">
                     <el-tag size="small" type="info">{{ project.codename }}</el-tag>
+                    
                     <el-tag 
-                      v-if="getUserRole(project)" 
+                      v-if="auth.isSuperuser" 
+                      size="small" 
+                      type="warning" 
+                      effect="dark"
+                    >
+                      SUPERUSER
+                    </el-tag>
+
+                    <el-tag 
+                      v-else-if="getUserRole(project)" 
                       size="small" 
                       :type="getUserRole(project) === 'admin' ? 'danger' : undefined"
                       effect="plain"
                     >
                       {{ getUserRole(project)?.toUpperCase() }}
                     </el-tag>
-                  </div>
+                    </div>
                 </div>
                 
                 <div class="project-actions">
-                  <!-- 根據權限動態顯示按鈕文字 -->
                   <el-button 
                     type="primary" 
                     plain 

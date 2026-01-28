@@ -204,9 +204,12 @@ const filteredMembers = computed(() => {
 });
 
 // 尚未加入專案的使用者 (原始清單)
+// 【修正部分】：加入 u.role !== 'superuser' 的過濾條件
 const usersNotInProject = computed(() => {
   const currentMemberNames = projectMembers.value.map(m => m.username);
-  return allSystemUsers.value.filter(u => !currentMemberNames.includes(u.username));
+  return allSystemUsers.value.filter(u => 
+    !currentMemberNames.includes(u.username) && u.role !== 'superuser'
+  );
 });
 
 // 過濾後的未加入專案使用者 (加入搜尋邏輯)
