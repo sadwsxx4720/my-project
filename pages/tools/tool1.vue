@@ -206,12 +206,12 @@ const canManageKeys = computed(() => {
   return auth.isSuperuser || currentUserProjectRole.value === 'admin';
 })
 
-// 【修正部分】: 專門給 Parent Key 的管理權限 (只有 Superuser 有)
+// 專門給 Parent Key 的管理權限 (只有 Superuser 有)
 const canManageParentKeys = computed(() => {
   return auth.isSuperuser; 
 })
 
-// 【修正部分】: 判斷是否為專案 Admin
+// 判斷是否為專案 Admin
 const isProjectAdmin = computed(() => {
   return currentUserProjectRole.value === 'admin';
 })
@@ -429,7 +429,6 @@ const handleOpenFirstCreateDialog = () => {
   firstCreateForm.cloud_type = ''; 
   firstCreateForm.account = '';
   
-  // 【修正部分】: 如果是 Admin，預設選擇 'Child'；否則清空讓使用者選
   if (isProjectAdmin.value) {
     firstCreateForm.key_type = 'Child';
   } else {
@@ -595,7 +594,7 @@ watch(() => auth.currentSelectedCodename, async () => {
               :icon="Plus" 
               @click="handleOpenFirstCreateDialog"
               style="margin-right: 3px;"
-              v-if="canManageKeys"
+              v-if="auth.isSuperuser"
             >
               新增金鑰
             </el-button>

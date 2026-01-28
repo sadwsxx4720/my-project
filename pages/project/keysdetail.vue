@@ -89,6 +89,16 @@
       destroy-on-close
     >
       <div class="bind-modal-body">
+        
+        <el-alert 
+          v-if="bindErrorMsg"
+          :title="bindErrorMsg"
+          type="error"
+          show-icon
+          :closable="false"
+          class="mb-4"
+        />
+
         <el-alert title="請選擇平台並輸入對應的憑證資訊" type="info" :closable="false" class="mb-4" />
 
         <el-form label-position="top" class="bind-form">
@@ -177,6 +187,7 @@ const submittingBindKey = ref(false);
 const bindForm = reactive({ platform: 'AWS', keyId: '', secretKey: '', jsonContent: '' });
 const uploadRef = ref<UploadInstance>();
 const fileList = ref<UploadUserFile[]>([]);
+const bindErrorMsg = ref(''); // 統一錯誤訊息變數
 
 // --- Lifecycle ---
 onMounted(async () => {
@@ -185,7 +196,7 @@ onMounted(async () => {
 
   if (!projectCodename.value) {
     ElMessage.error('無效的專案代號，將返回列表');
-    router.push('/project'); // 明確指定回到 index
+    router.push('/project'); 
     return;
   }
 
@@ -193,7 +204,6 @@ onMounted(async () => {
 });
 
 const goBackToList = () => {
-  // 使用原生 JS 強制導向，這會確保頁面完整重新整理並載入列表頁
   window.location.href = '/project';
 };
 
@@ -204,7 +214,6 @@ const loadKeyDetails = async () => {
   try {
     const token = localStorage.getItem('auth_token');
     
-    // 1. 打 /projects/get_one (POST) 取得專案內的 Key ID 列表
     const projRes = await axios.post('http://localhost:8000/projects/get_one', 
       { codename: projectCodename.value }, 
       { headers: { Authorization: `Bearer ${token}` } }
@@ -222,7 +231,6 @@ const loadKeyDetails = async () => {
 
     rawMainKeys.value = Array.isArray(targetProject.mainkeys) ? targetProject.mainkeys : [];
 
-    // 2. 遍歷每個 ID，分別打 /keys/get_one (POST) 取得詳細資訊
     const detailsPromises = rawMainKeys.value.map(async (key) => {
       try {
         const detailRes = await axios.post('http://localhost:8000/keys/get_one', 
@@ -260,7 +268,6 @@ const handleToggleState = async (row: any) => {
 
   const currentState = row.key_state;
   
-  // 1. 判斷要打哪個 API 節點
   let apiUrl = '';
   if (row.cloud_type === 'AWS') {
     apiUrl = 'http://localhost:8000/cloud_platform/aws/iam/update';
@@ -278,7 +285,6 @@ const handleToggleState = async (row: any) => {
     updatingStateId.value = row.key_id;
     const token = localStorage.getItem('auth_token');
 
-    // 2. 修正 Payload 格式：包含 codename, key_id, key_state (目前狀態)
     const payload = {
       codename: projectCodename.value,
       key_id: row.key_id,
@@ -291,7 +297,6 @@ const handleToggleState = async (row: any) => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        ElMessage.success(`已${actionText}金鑰`);
-       // API 成功後，更新前端顯示為目標狀態
        row.key_state = targetState;
     } else {
        ElMessage.error(res.data?.message || `無法${actionText}`);
@@ -311,16 +316,27 @@ const openBindKeyModal = () => {
   bindForm.keyId = '';
   bindForm.secretKey = '';
   bindForm.jsonContent = '';
+  bindErrorMsg.value = ''; // Modal 開啟時清空錯誤
   bindKeyVisible.value = true;
 };
 
+// 【修改】handleGcpFileChange：將錯誤訊息寫入 bindErrorMsg
 const handleGcpFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) => {
+  // 重置錯誤訊息
+  bindErrorMsg.value = '';
+  
   if (uploadFiles.length > 1) uploadFiles.shift();
   const rawFile = uploadFile.raw;
   if (!rawFile) return;
+
+  // 1. 檢查副檔名
   if (rawFile.type !== 'application/json' && !rawFile.name.endsWith('.json')) {
-    ElMessage.error('請上傳 .json 格式'); return;
+    bindErrorMsg.value = '格式錯誤：請上傳 .json 格式的檔案';
+    // 移除不合規的檔案顯示
+    uploadRef.value!.clearFiles();
+    return;
   }
+
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
@@ -329,19 +345,22 @@ const handleGcpFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) =
         const jsonObj = JSON.parse(result);
         bindForm.jsonContent = JSON.stringify(jsonObj);
         
-        // 自動從 JSON 獲取 private_key_id
+        // 2. 檢查 private_key_id 是否存在
         if (jsonObj.private_key_id) {
           bindForm.keyId = jsonObj.private_key_id;
-          ElMessage.success('已讀取憑證 ID');
+          bindErrorMsg.value = ''; // 成功則清空錯誤
+          ElMessage.success('已讀取憑證 ID'); // 成功提示保留為 Toast 較佳
         } else {
-          ElMessage.warning('上傳的 JSON 檔案中找不到 private_key_id 欄位');
+          // 【這裡修改為顯示在 Modal 內】
+          bindErrorMsg.value = '檔案內容錯誤：上傳的 JSON 中找不到 private_key_id 欄位';
           bindForm.keyId = ''; 
         }
       }
     } catch (err) { 
       bindForm.jsonContent = '';
       bindForm.keyId = '';
-      ElMessage.error('JSON 解析失敗');
+      // 【這裡修改為顯示在 Modal 內】
+      bindErrorMsg.value = '檔案讀取失敗：JSON 格式無效，請確認檔案內容';
     }
   };
   reader.readAsText(rawFile);
@@ -349,7 +368,6 @@ const handleGcpFileChange: UploadProps['onChange'] = (uploadFile, uploadFiles) =
 
 const handleGcpExceed: UploadProps['onExceed'] = (files) => {
   uploadRef.value!.clearFiles();
-  // 使用 UploadRawFile 才是 handleStart 真正預期的輸入類型
   uploadRef.value!.handleStart(files[0] as UploadRawFile);
 };
 
@@ -358,16 +376,16 @@ const isSubmitDisabled = computed(() => {
   return bindForm.platform === 'AWS' ? !bindForm.secretKey : !bindForm.jsonContent;
 });
 
-// 【修改】 submitBindKey：符合後端 { codename, mainkey: { key_id, key_info } } 格式
+// submitBindKey：API 錯誤處理
 const submitBindKey = async () => {
   submittingBindKey.value = true;
+  bindErrorMsg.value = ''; // 送出前先清空舊的錯誤訊息
+
   try {
     const token = localStorage.getItem('auth_token');
     
-    // 準備新的 Key 資訊
     let finalKeyInfo = bindForm.platform === 'AWS' ? bindForm.secretKey : bindForm.jsonContent;
     
-    // 修改處：不使用陣列，而是只傳送單一個 mainkey 物件
     const payload = {
       codename: projectCodename.value,
       mainkey: {
@@ -382,30 +400,45 @@ const submitBindKey = async () => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        
-       // 同步呼叫 Summary API (POST + {codename})
-       try {
-         await axios.post('http://localhost:8000/cloud_platform/summary', 
+       axios.post('http://localhost:8000/cloud_platform/summary', 
            { codename: projectCodename.value }, 
            { headers: { Authorization: `Bearer ${token}` } }
-         );
-       } catch (summaryErr) {
-         console.error('更新 Cloud Platform Summary 失敗', summaryErr);
-       }
+       ).catch(summaryErr => {
+           console.warn('更新 Summary 失敗，但不影響綁定結果', summaryErr);
+       });
 
        ElMessage.success('綁定成功');
        bindKeyVisible.value = false;
-       await loadKeyDetails(); // 重新載入列表
+       await loadKeyDetails(); 
+       
     } else {
-       ElMessage.error(res.data?.message || '綁定失敗');
+       throw new Error(res.data?.message || res.data?.detail || '綁定失敗 (Unknown Error)');
     }
-  } catch (err) {
-    console.error(err);
-    ElMessage.error('API Error');
+
+  } catch (err: any) {
+    console.error("Binding Error:", err);
+    
+    let errorMsg = '綁定失敗，請稍後再試';
+    let backendMessage = '';
+
+    if (err.response && err.response.data) {
+        backendMessage = err.response.data.message || err.response.data.detail || '';
+    } else if (err.message) {
+        backendMessage = err.message;
+    }
+    
+    if (typeof backendMessage === 'string' && backendMessage.includes('Main key is invalid')) {
+        errorMsg = '綁定失敗：無效的母金鑰 (Main key is invalid)，請檢查憑證是否正確或擁有足夠權限。';
+    } else if (backendMessage) {
+        errorMsg = `綁定失敗：${backendMessage}`;
+    }
+
+    bindErrorMsg.value = errorMsg; // 寫入 Modal 錯誤訊息變數
+
   } finally {
     submittingBindKey.value = false;
   }
 };
-
 </script>
 
 <style scoped>

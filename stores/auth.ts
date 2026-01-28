@@ -17,6 +17,10 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(null);
   const user = ref<User | null>(null);
   const selectedCodename = ref<string | null>(null);
+  
+  // 【新增】專案列表版本號，用於跨元件通知更新
+  const projectListVersion = ref(0);
+
   const router = useRouter();
 
   // --- Getters ---
@@ -32,6 +36,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isSuperuser = computed((): boolean => user.value?.role === 'superuser');
 
   // --- Actions ---
+
+  // 【新增】更新專案列表訊號
+  function updateProjectList() {
+    projectListVersion.value++;
+    console.log('Project list version updated:', projectListVersion.value);
+  }
 
   // 設置 Token
   function setToken(newToken: string | null) {
@@ -243,6 +253,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     user,
     selectedCodename,
+    projectListVersion, // 【新增】匯出版本號
     isAuthenticated,
     availableCodename,
     currentSelectedCodename,
@@ -254,5 +265,6 @@ export const useAuthStore = defineStore('auth', () => {
     initializeAuth,
     fetchCurrentUserDetails,
     setSelectedCodename,
+    updateProjectList,  // 【新增】匯出更新方法
   };
 });

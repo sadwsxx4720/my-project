@@ -518,6 +518,11 @@ const deleteProject = async (project: Project) => {
 
       ElMessage.success('專案已刪除並更新相關使用者資料');
       await fetchProjects();
+      
+      // 【修改處】：刪除後也更新上方選單
+      if (typeof auth.updateProjectList === 'function') {
+        auth.updateProjectList();
+      }
 
     } catch (err: any) {
       console.error(err);
@@ -531,14 +536,12 @@ const deleteProject = async (project: Project) => {
 // --- Add Project Wizard State ---
 const addProjectVisible = ref(false);
 const activeStep = ref(0);
-// 【修改】加入 rotation 屬性，預設 365
 const newProjectForm = reactive({ projectname: '', codename: '', rotation: 365 }); 
 const selectedAdmins = ref<ApiUser[]>([]);
 const selectedViewers = ref<ApiUser[]>([]);
 
 // Available Users for Admin Step (With Filter)
 const availableUsers = computed(() => {
-  // 【修改】篩選掉 superuser
   let users = allApiUsers.value.filter(u => u.role !== 'superuser');
   if (searchAdminQuery.value) {
     const q = searchAdminQuery.value.toLowerCase();
@@ -550,7 +553,6 @@ const availableUsers = computed(() => {
 // Available Users for Viewer Step (With Filter + Exclude Admins)
 const availableViewers = computed(() => {
   const adminUsernames = selectedAdmins.value.map(u => u.username);
-  // 【修改】篩選掉 superuser 並排除已選的 admins
   let users = allApiUsers.value.filter(u => u.role !== 'superuser' && !adminUsernames.includes(u.username));
   if (searchViewerQuery.value) {
     const q = searchViewerQuery.value.toLowerCase();
@@ -564,7 +566,7 @@ const openAddProjectModal = async () => {
   activeStep.value = 0;
   newProjectForm.projectname = '';
   newProjectForm.codename = '';
-  newProjectForm.rotation = 365; // 【修改】重置時恢復預設值
+  newProjectForm.rotation = 365;
   selectedAdmins.value = [];
   selectedViewers.value = [];
   searchAdminQuery.value = '';
@@ -587,7 +589,6 @@ const nextStep = () => {
       ElMessage.warning('請填寫完整專案名稱與代號');
       return;
     }
-    // 【修改】驗證 rotation
     if (!newProjectForm.rotation) {
       ElMessage.warning('請填寫輪替天數');
       return;
@@ -616,7 +617,7 @@ const finishAddProject = async () => {
     const projectPayload = {
       projectname: newProjectForm.projectname,
       codename: projectCode,
-      rotation: newProjectForm.rotation, // 【修改】使用表單設定的值
+      rotation: newProjectForm.rotation,
       mailreceivers: [],
       projectinfo: projectinfoPayload,
       mainkeys: []
@@ -629,6 +630,12 @@ const finishAddProject = async () => {
       ElMessage.success('新增專案成功！');
       addProjectVisible.value = false;
       await fetchProjects();
+      
+      // 【修改處】：新增成功後，呼叫 Store 的更新方法
+      if (typeof auth.updateProjectList === 'function') {
+        auth.updateProjectList();
+      }
+      
     } else {
       ElMessage.error('新增專案失敗');
     }
@@ -668,15 +675,12 @@ const backToList = async () => {
 
 // --- Add Member Modal Logic ---
 
-// 1. Users Not In Project (Base List)
 const usersNotInProject = computed(() => {
   if (!currentProject.value || allApiUsers.value.length === 0) return [];
   const currentMemberUsernames = currentProject.value.projectinfo.map(m => m.username);
-  // 【修改】篩選掉 superuser 並排除已在專案中的成員
   return allApiUsers.value.filter(u => u.role !== 'superuser' && !currentMemberUsernames.includes(u.username));
 });
 
-// 2. Filtered List for Admin Table
 const filteredUsersForAdmin = computed(() => {
   let users = usersNotInProject.value;
   if (searchAddAdminQuery.value) {
@@ -686,7 +690,6 @@ const filteredUsersForAdmin = computed(() => {
   return users;
 });
 
-// 3. Filtered List for Viewer Table (Exclude selected Admins)
 const filteredUsersForViewer = computed(() => {
   const adminUsernames = selectedAdminsToAdd.value.map(u => u.username);
   let users = usersNotInProject.value.filter(u => !adminUsernames.includes(u.username));

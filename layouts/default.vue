@@ -195,7 +195,7 @@ const fetchUserProjects = async () => {
   }
 };
 
-// 2. 【新增】Superuser：透過 projects/get_all 獲取所有專案
+// 2. Superuser：透過 projects/get_all 獲取所有專案
 const fetchAllProjects = async () => {
   try {
     const token = localStorage.getItem('auth_token');
@@ -224,7 +224,7 @@ watch(
   () => auth.user?.username,
   async (newVal) => {
     if (newVal) {
-      // 【修改部分】：判斷身分決定要呼叫哪個 API
+      // 判斷身分決定要呼叫哪個 API
       if (auth.isSuperuser) {
         await fetchAllProjects();
       } else {
@@ -247,6 +247,20 @@ watch(
     }
   },
   { immediate: true } 
+);
+
+// 3. 【新增】監聽 Store 中的專案列表版本號，當版本號變更時重新抓取清單
+// 這能確保在專案管理頁面新增專案後，上方列表會自動更新
+watch(
+  () => auth.projectListVersion,
+  async () => {
+    // 根據身分重新呼叫對應的 API
+    if (auth.isSuperuser) {
+      await fetchAllProjects();
+    } else {
+      await fetchUserProjects();
+    }
+  }
 );
 
 
