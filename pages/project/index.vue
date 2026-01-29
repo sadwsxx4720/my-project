@@ -19,6 +19,15 @@
         </div>
       </div>
 
+      <el-alert
+        v-if="projectFetchError"
+        :title="projectFetchError"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="mb-4"
+      />
+
       <el-card shadow="never" class="table-card" v-loading="loadingProjects">
         <el-table :data="filteredProjects" style="width: 100%" stripe>
           <el-table-column prop="projectid" label="專案 ID" width="350" sortable />
@@ -66,6 +75,8 @@
             </template>
           </el-table-column>
         </el-table>
+        
+        <el-empty v-if="filteredProjects.length === 0 && !loadingProjects && !projectFetchError" description="目前沒有專案" />
       </el-card>
     </div>
 
@@ -411,6 +422,9 @@ const searchAdminQuery = ref('');
 const searchViewerQuery = ref('');
 const addProjectError = ref(''); 
 
+// --- 專案獲取錯誤的提示訊息狀態 ---
+const projectFetchError = ref('');
+
 // --- Add Member Modal State ---
 const addMemberVisible = ref(false);
 const selectedAdminsToAdd = ref<ApiUser[]>([]);
@@ -433,6 +447,7 @@ const filteredProjects = computed(() => {
 
 const fetchProjects = async () => {
   loadingProjects.value = true;
+  projectFetchError.value = ''; // 重置錯誤訊息
   try {
     const token = localStorage.getItem('auth_token');
     if (!token) throw new Error('未登入');
@@ -447,11 +462,51 @@ const fetchProjects = async () => {
         mainkeys: Array.isArray(p.mainkeys) ? p.mainkeys : []
       }));
     } else {
-      ElMessage.error(res.data?.message || '獲取專案列表失敗');
+      // 【修正區塊 Start】
+      // 這裡處理 HTTP 200 OK，但 JSON body 內 code != 0/200 的情況 (例如 code: 500)
+      const errorMsg = res.data?.message || '';
+      
+      // 判斷是否為 "No projects found" 類型的錯誤
+      if (typeof errorMsg === 'string' && (errorMsg.includes("No projects found") || errorMsg.includes("Project not found"))) {
+          projectFetchError.value = '目前無專案或專案獲取錯誤';
+          projects.value = []; // 清空列表
+          // 【重要】這裡直接返回，不要執行下方的 ElMessage.error
+          return;
+      }
+
+      // 如果不是上述錯誤，才顯示紅色錯誤提示
+      ElMessage.error(errorMsg || '獲取專案列表失敗');
+      // 【修正區塊 End】
     }
   } catch (err: any) {
     console.error(err);
+    
+    // 這裡處理 HTTP 錯誤 (如 400, 500)
+    let isNoProjectError = false;
+
+    // 1. 檢查後端回傳的 JSON 是否包含關鍵字
+    if (err.response && err.response.data) {
+        const msg = err.response.data.message || '';
+        const detail = err.response.data.detail; 
+
+        if (typeof msg === 'string' && (msg.includes("No projects found") || msg.includes("Project not found"))) {
+            isNoProjectError = true;
+        }
+        if (detail === "No projects found" || detail === "Project not found") {
+            isNoProjectError = true;
+        }
+    }
+
+    // 2. 如果判定為無專案錯誤
+    if (isNoProjectError) {
+        projectFetchError.value = '目前無專案或專案獲取錯誤';
+        projects.value = []; 
+        return; 
+    }
+    
+    // 其他錯誤才顯示紅色視窗
     ElMessage.error('獲取專案列表發生錯誤');
+
   } finally {
     loadingProjects.value = false;
   }
@@ -511,7 +566,7 @@ const goToKeyDetails = (project: Project) => {
   });
 };
 
-// --- 刪除專案 (【修正】加入前端手動移除邏輯) ---
+// --- 刪除專案 ---
 const deleteProject = async (project: Project) => {
   ElMessageBox.confirm(
     `確定要刪除專案「${project.projectname}」嗎？這將會同步移除所有使用者的專案權限。`,
@@ -531,14 +586,10 @@ const deleteProject = async (project: Project) => {
         data: { codename: project.codename }
       });
 
-      // 【修正】API 成功後，立即手動將該專案從前端列表中移除
-      // 這能避免資料庫延遲導致 fetchProjects 撈回已被刪除的資料
+      // API 成功後，立即手動將該專案從前端列表中移除
       projects.value = projects.value.filter(p => p.projectid !== project.projectid);
 
       ElMessage.success('專案已刪除並更新相關使用者資料');
-      
-      // 仍然呼叫 fetchProjects 確保與伺服器同步 (以防有其他更新)
-      await fetchProjects();
       
       if (typeof auth.updateProjectList === 'function') {
         auth.updateProjectList();
