@@ -52,6 +52,12 @@ const firstCreateForm = reactive({
   key_type: '',   // 使用者選擇 Parent/Child
 })
 
+// --- 【新增】Helper: 判斷金鑰是否為 Active (包含處理資料庫拼字錯誤 Acitve) ---
+const isKeyActive = (state: string | null | undefined): boolean => {
+  if (!state) return false;
+  return state === 'Active' || state === 'Acitve';
+}
+
 // --- Computed: 表單驗證 (First Create) ---
 const isFirstCreateFormValid = computed(() => {
   return (
@@ -299,12 +305,13 @@ const treeData = computed(() => {
   return tree;
 });
 
-// 狀態切換
+// 狀態切換 (啟用/停用)
 const handleToggleState = async (row: KeyData) => {
   if (updatingStateMap.value[row.key_id]) return;
 
   const currentState = row.key_state;
-  const actionText = currentState === 'Active' ? '停用' : '啟用';
+  const isCurrentlyActive = isKeyActive(currentState);
+  const actionText = isCurrentlyActive ? '停用' : '啟用';
   const cloudType = row.cloud_type;
 
   try {
@@ -333,15 +340,33 @@ const handleToggleState = async (row: KeyData) => {
 
     if (res.data && (res.data.code === 0 || res.data.code === 200)) {
        ElMessage.success(`金鑰已${actionText}`);
-       row.key_state = currentState === 'Active' ? 'Disabled' : 'Active';
+       row.key_state = isCurrentlyActive ? 'Disabled' : 'Active';
        await fetchKeys(); 
     } else {
-       ElMessage.error(res.data?.message || `無法${actionText}金鑰`);
-       await fetchKeys(); 
+       // 後端 API 回傳 200 但帶有錯誤訊息時的處理
+       const errMsg = res.data?.message || res.data?.detail || '';
+       
+       if (typeof errMsg === 'string' && errMsg.includes('Old Key does not exist in cloud platform')) {
+          ElMessage.error('Old Key does not exist in cloud platform');
+          await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+       } else {
+          ElMessage.error(errMsg || `無法${actionText}金鑰`);
+          await fetchKeys(); 
+       }
     }
-  } catch (e) {
+  } catch (e: any) {
     console.error(e);
-    ElMessage.error(`操作失敗`);
+    let errorDetail = '';
+    if (e.response && e.response.data) {
+        errorDetail = e.response.data.detail || e.response.data.message || '';
+    }
+
+    if (typeof errorDetail === 'string' && errorDetail.includes('Old Key does not exist in cloud platform')) {
+        ElMessage.error('Old Key does not exist in cloud platform');
+        await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+    } else {
+        ElMessage.error(`操作失敗`);
+    }
   } finally {
     updatingStateMap.value[row.key_id] = false;
   }
@@ -395,14 +420,22 @@ const handleRotateKey = async (row: KeyData) => {
     console.error(err);
     if (err.response && err.response.data instanceof Blob) {
         const reader = new FileReader();
-        reader.onload = () => {
+        // 【修正】改為 async 函式以便使用 await fetchKeys()
+        reader.onload = async () => {
             try {
                 const errorData = JSON.parse(reader.result as string);
                 const errorMsg = errorData.detail || errorData.message || '';
                 
+                // 檢查特定錯誤：Access Key 已滿
                 if (typeof errorMsg === 'string' && errorMsg.includes('User already has 2 access key')) {
                     ElMessage.error('目前已有兩把AWS Access key 無法新增母key');
-                } else {
+                } 
+                // 檢查特定錯誤：Old Key 不存在
+                else if (typeof errorMsg === 'string' && errorMsg.includes('Old Key does not exist in cloud platform')) {
+                    ElMessage.error('Old Key does not exist in cloud platform');
+                    await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+                } 
+                else {
                     ElMessage.error(errorMsg || '新增金鑰失敗');
                 }
             } catch (e) {
@@ -505,6 +538,7 @@ const submitFirstCreateKey = async () => {
   }
 }
 
+// 刪除金鑰
 const handleDeleteKey = async (row: KeyData) => {
   try {
     await ElMessageBox.confirm(
@@ -533,13 +567,31 @@ const handleDeleteKey = async (row: KeyData) => {
        ElMessage.success('刪除成功');
        await fetchKeys(); 
     } else {
-       ElMessage.error(res.data?.message || '刪除失敗');
+       // 檢查 API 回傳錯誤 (200 OK 但有錯誤訊息)
+       const errMsg = res.data?.message || res.data?.detail || '';
+       if (typeof errMsg === 'string' && errMsg.includes('Old Key does not exist in cloud platform')) {
+          ElMessage.error('Old Key does not exist in cloud platform');
+          await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+       } else {
+          ElMessage.error(errMsg || '刪除失敗');
+       }
     }
 
   } catch (err: any) {
     if (err !== 'cancel') {
        console.error(err);
-       ElMessage.error(err.message || '刪除失敗');
+       // 檢查 HTTP 錯誤 (如 400/500)
+       let errorDetail = '';
+       if (err.response && err.response.data) {
+           errorDetail = err.response.data.detail || err.response.data.message || '';
+       }
+
+       if (typeof errorDetail === 'string' && errorDetail.includes('Old Key does not exist in cloud platform')) {
+           ElMessage.error('Old Key does not exist in cloud platform');
+           await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+       } else {
+           ElMessage.error(err.message || '刪除失敗');
+       }
     }
   }
 }
@@ -661,7 +713,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_state" label="狀態" width="100" align="center">
              <template #default="scope">
-                 <el-tag :type="scope.row.key_state === 'Active' ? 'success' : 'info'">
+                 <el-tag :type="isKeyActive(scope.row.key_state) ? 'success' : 'info'">
                    {{ scope.row.key_state }}
                  </el-tag>
              </template>
@@ -694,7 +746,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_description" label="描述" min-width="200" show-overflow-tooltip />
 
-          <el-table-column label="操作" width="220" align="center" fixed="right"> 
+          <el-table-column label="操作" width="220" align="center"> 
             <template #default="scope">
               <div class="action-buttons">
                 
@@ -711,7 +763,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                     </el-button>
 
                     <el-button
-                      v-else-if="scope.row.key_state === 'Active' && (auth.isSuperuser || scope.row.key_type === 'Child')"
+                      v-else-if="isKeyActive(scope.row.key_state) && (auth.isSuperuser || scope.row.key_type === 'Child')"
                       type="warning"
                       size="small"
                       plain
@@ -724,7 +776,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 <span v-else style="margin-right: 5px; color: #ccc;">-</span>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Parent' && canManageParentKeys && scope.row.key_state === 'Active'"
+                  v-if="scope.row.key_type === 'Parent' && canManageParentKeys && isKeyActive(scope.row.key_state)"
                   size="small"
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
@@ -734,7 +786,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Child' && canManageKeys && scope.row.key_state === 'Active'"
+                  v-if="scope.row.key_type === 'Child' && canManageKeys && isKeyActive(scope.row.key_state)"
                   size="small"
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
