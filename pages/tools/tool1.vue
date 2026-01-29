@@ -100,8 +100,9 @@ const getDynamicFilename = async (blob: Blob, defaultName: string) => {
     }
 
     if (keyId && keyId.length >= 4) {
-      const suffix = keyId.slice(-4);
-      return `credentials(${suffix}).json`;
+      const suffix = keyId.slice(-5);
+      const currentCodename = auth.currentSelectedCodename; 
+      return `${currentCodename}_${suffix}.json`;
     }
   } catch (e) {
     console.warn('解析 Blob 以產生檔名時發生錯誤，將使用預設檔名', e);

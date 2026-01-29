@@ -137,6 +137,15 @@
       destroy-on-close
       append-to-body
     >
+      <el-alert 
+        v-if="addProjectError"
+        :title="addProjectError"
+        type="error"
+        show-icon
+        :closable="false"
+        class="mb-4"
+      />
+
       <el-steps :active="activeStep" finish-status="finish" align-center class="mb-4">
         <el-step title="基本資訊" />
         <el-step title="新增 Admin" />
@@ -148,9 +157,14 @@
           <el-form-item label="輸入名稱" required>
             <el-input v-model="newProjectForm.projectname" placeholder="請輸入專案名稱" />
           </el-form-item>
+          
           <el-form-item label="輸入代號" required>
-            <el-input v-model="newProjectForm.codename" placeholder="請輸入專案代號 (唯一識別碼)" />
+            <el-input 
+              v-model="newProjectForm.codename" 
+              placeholder="請輸入專案代號 (僅限英數、底線、連字號，不可輸入中文)" 
+            />
           </el-form-item>
+
           <el-form-item label="輪替天數 (Rotation Days)" required>
             <el-input-number 
               v-model="newProjectForm.rotation" 
@@ -395,6 +409,7 @@ const searchQuery = ref('');
 // --- Add Project Wizard Search State ---
 const searchAdminQuery = ref('');
 const searchViewerQuery = ref('');
+const addProjectError = ref(''); 
 
 // --- Add Member Modal State ---
 const addMemberVisible = ref(false);
@@ -496,7 +511,7 @@ const goToKeyDetails = (project: Project) => {
   });
 };
 
-// --- 刪除專案 ---
+// --- 刪除專案 (【修正】加入前端手動移除邏輯) ---
 const deleteProject = async (project: Project) => {
   ElMessageBox.confirm(
     `確定要刪除專案「${project.projectname}」嗎？這將會同步移除所有使用者的專案權限。`,
@@ -516,10 +531,15 @@ const deleteProject = async (project: Project) => {
         data: { codename: project.codename }
       });
 
+      // 【修正】API 成功後，立即手動將該專案從前端列表中移除
+      // 這能避免資料庫延遲導致 fetchProjects 撈回已被刪除的資料
+      projects.value = projects.value.filter(p => p.projectid !== project.projectid);
+
       ElMessage.success('專案已刪除並更新相關使用者資料');
+      
+      // 仍然呼叫 fetchProjects 確保與伺服器同步 (以防有其他更新)
       await fetchProjects();
       
-      // 【修改處】：刪除後也更新上方選單
       if (typeof auth.updateProjectList === 'function') {
         auth.updateProjectList();
       }
@@ -571,6 +591,7 @@ const openAddProjectModal = async () => {
   selectedViewers.value = [];
   searchAdminQuery.value = '';
   searchViewerQuery.value = '';
+  addProjectError.value = ''; 
   addProjectVisible.value = true;
   await fetchUsers();
 };
@@ -584,11 +605,20 @@ const handleViewerSelection = (val: ApiUser[]) => {
 };
 
 const nextStep = () => {
+  addProjectError.value = '';
+  
   if (activeStep.value === 0) {
     if (!newProjectForm.projectname || !newProjectForm.codename) {
       ElMessage.warning('請填寫完整專案名稱與代號');
       return;
     }
+
+    const codenameRegex = /^[a-zA-Z0-9_-]+$/;
+    if (!codenameRegex.test(newProjectForm.codename)) {
+      addProjectError.value = '專案代號格式錯誤：僅限輸入英文字母、數字、底線 (_) 或連字號 (-)，不可包含中文、空格或特殊符號。';
+      return; 
+    }
+
     if (!newProjectForm.rotation) {
       ElMessage.warning('請填寫輪替天數');
       return;
@@ -598,11 +628,14 @@ const nextStep = () => {
 };
 
 const prevStep = () => {
+  addProjectError.value = ''; 
   activeStep.value--;
 };
 
 const finishAddProject = async () => {
   submittingProject.value = true;
+  addProjectError.value = ''; 
+
   try {
     const token = localStorage.getItem('auth_token');
     if (!token) throw new Error('未登入');
@@ -626,30 +659,46 @@ const finishAddProject = async () => {
     const res = await axios.post('http://localhost:8000/projects/', projectPayload, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    
     if (res.status === 200 || res.status === 201) {
+      if (res.data && res.data.code !== undefined && res.data.code !== 0 && res.data.code !== 200) {
+          throw new Error(res.data.message || '新增專案失敗');
+      }
+
       ElMessage.success('新增專案成功！');
       addProjectVisible.value = false;
       await fetchProjects();
       
-      // 【修改處】：新增成功後，呼叫 Store 的更新方法
       if (typeof auth.updateProjectList === 'function') {
         auth.updateProjectList();
       }
-      
-    } else {
-      ElMessage.error('新增專案失敗');
     }
 
   } catch (err: any) {
     console.error(err);
-    ElMessage.error(err.response?.data?.message || '操作發生錯誤');
+    
+    let errorMsg = '操作發生錯誤';
+
+    if (err.response && err.response.data) {
+        const backendMsg = err.response.data.message;
+        
+        if (backendMsg === 'Project already exists') {
+            errorMsg = '新增失敗：此專案代號 (Codename) 已被使用，請回到第一步更換代號。';
+        } else {
+            errorMsg = `新增失敗：${backendMsg || '未知錯誤'}`;
+        }
+    } else if (err.message) {
+        errorMsg = err.message;
+    }
+
+    addProjectError.value = errorMsg;
+
   } finally {
     submittingProject.value = false;
   }
 };
 
 // --- State: Page Switching Logic ---
-// 切換到詳細頁面 (成員管理)
 const switchToDetailsView = async (project: Project) => {
   loadingProjects.value = true;
   try {
@@ -666,7 +715,6 @@ const switchToDetailsView = async (project: Project) => {
   }
 };
 
-// 返回列表
 const backToList = async () => {
   viewMode.value = 'list';
   currentProject.value = null;

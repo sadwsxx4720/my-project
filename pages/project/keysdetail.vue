@@ -428,9 +428,11 @@ const submitBindKey = async () => {
     }
     
     if (typeof backendMessage === 'string' && backendMessage.includes('Main key is invalid')) {
-        errorMsg = '綁定失敗：無效的母金鑰 (Main key is invalid)，請檢查憑證是否正確或擁有足夠權限。';
-    } else if (backendMessage) {
-        errorMsg = `綁定失敗：${backendMessage}`;
+        errorMsg = '綁定失敗：無效的母金鑰 (Main key is invalid)，請檢查憑證是否正確或擁有足夠權限。';   
+    } else if (typeof backendMessage === 'string' && backendMessage.includes('Main key already exists in the project')) {
+        errorMsg = `綁定失敗：母金鑰已經存在在專案中，請勿重複綁定。`;
+    } else if (err.message) {
+        errorMsg = `綁定失敗：${err.message}`;
     }
 
     bindErrorMsg.value = errorMsg; // 寫入 Modal 錯誤訊息變數
