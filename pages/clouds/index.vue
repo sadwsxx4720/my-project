@@ -169,15 +169,24 @@ const filteredData = computed(() => {
   const query = searchQuery.value.toLowerCase();
 
   return cloudServices.value.filter(service => {
+    // 取得該雲平台服務關聯的所有專案代號
     const serviceCodenames = service.projects ? service.projects.map(p => p.codename) : [];
     
     let codenameMatch = false;
+    
     if (currentCode === 'all') {
-         if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
-             return false;
+         // 【修正】如果是 Superuser，直接視為匹配 (可以看到所有資料)
+         if (auth.isSuperuser) {
+             codenameMatch = true;
+         } else {
+             // 一般使用者：檢查是否有任何一個關聯專案在該使用者的允許清單中
+             if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
+                 return false;
+             }
+             codenameMatch = serviceCodenames.some(code => allowedUserCodes.includes(code));
          }
-         codenameMatch = serviceCodenames.some(code => allowedUserCodes.includes(code));
     } else {
+        // 單一專案篩選：檢查該服務是否包含當前選擇的專案
         codenameMatch = serviceCodenames.includes(currentCode);
     }
     

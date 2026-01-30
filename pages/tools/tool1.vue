@@ -52,10 +52,11 @@ const firstCreateForm = reactive({
   key_type: '',   // 使用者選擇 Parent/Child
 })
 
-// --- 【新增】Helper: 判斷金鑰是否為 Active (包含處理資料庫拼字錯誤 Acitve) ---
+// --- Helper: 判斷金鑰是否為 Active (包含處理資料庫拼字錯誤 Acitve) ---
 const isKeyActive = (state: string | null | undefined): boolean => {
   if (!state) return false;
-  return state === 'Active' || state === 'Acitve';
+  const s = state.trim();
+  return s === 'Active' || s === 'Acitve';
 }
 
 // --- Computed: 表單驗證 (First Create) ---
@@ -239,11 +240,18 @@ const filteredData = computed(() => {
     let codenameMatch = false;
 
     if (currentCode === 'all') {
-         if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
-             return false;
+         // 【修正】如果是 Superuser，直接視為匹配 (可以看到所有專案)
+         if (auth.isSuperuser) {
+             codenameMatch = true; 
+         } else {
+             // 一般使用者：必須檢查該金鑰是否屬於他被授權的專案
+             if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
+                 return false;
+             }
+             codenameMatch = allowedUserCodes.includes(keyCodename);
          }
-         codenameMatch = allowedUserCodes.includes(keyCodename);
     } else {
+        // 單一專案篩選
         codenameMatch = keyCodename === currentCode;
     }
     
@@ -343,12 +351,10 @@ const handleToggleState = async (row: KeyData) => {
        row.key_state = isCurrentlyActive ? 'Disabled' : 'Active';
        await fetchKeys(); 
     } else {
-       // 後端 API 回傳 200 但帶有錯誤訊息時的處理
        const errMsg = res.data?.message || res.data?.detail || '';
-       
        if (typeof errMsg === 'string' && errMsg.includes('Old Key does not exist in cloud platform')) {
           ElMessage.error('Old Key does not exist in cloud platform');
-          await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+          await fetchKeys(); 
        } else {
           ElMessage.error(errMsg || `無法${actionText}金鑰`);
           await fetchKeys(); 
@@ -363,7 +369,7 @@ const handleToggleState = async (row: KeyData) => {
 
     if (typeof errorDetail === 'string' && errorDetail.includes('Old Key does not exist in cloud platform')) {
         ElMessage.error('Old Key does not exist in cloud platform');
-        await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+        await fetchKeys(); 
     } else {
         ElMessage.error(`操作失敗`);
     }
@@ -420,20 +426,17 @@ const handleRotateKey = async (row: KeyData) => {
     console.error(err);
     if (err.response && err.response.data instanceof Blob) {
         const reader = new FileReader();
-        // 【修正】改為 async 函式以便使用 await fetchKeys()
         reader.onload = async () => {
             try {
                 const errorData = JSON.parse(reader.result as string);
                 const errorMsg = errorData.detail || errorData.message || '';
                 
-                // 檢查特定錯誤：Access Key 已滿
                 if (typeof errorMsg === 'string' && errorMsg.includes('User already has 2 access key')) {
                     ElMessage.error('目前已有兩把AWS Access key 無法新增母key');
                 } 
-                // 檢查特定錯誤：Old Key 不存在
                 else if (typeof errorMsg === 'string' && errorMsg.includes('Old Key does not exist in cloud platform')) {
                     ElMessage.error('Old Key does not exist in cloud platform');
-                    await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+                    await fetchKeys(); 
                 } 
                 else {
                     ElMessage.error(errorMsg || '新增金鑰失敗');
@@ -567,11 +570,10 @@ const handleDeleteKey = async (row: KeyData) => {
        ElMessage.success('刪除成功');
        await fetchKeys(); 
     } else {
-       // 檢查 API 回傳錯誤 (200 OK 但有錯誤訊息)
        const errMsg = res.data?.message || res.data?.detail || '';
        if (typeof errMsg === 'string' && errMsg.includes('Old Key does not exist in cloud platform')) {
           ElMessage.error('Old Key does not exist in cloud platform');
-          await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+          await fetchKeys(); 
        } else {
           ElMessage.error(errMsg || '刪除失敗');
        }
@@ -580,7 +582,6 @@ const handleDeleteKey = async (row: KeyData) => {
   } catch (err: any) {
     if (err !== 'cancel') {
        console.error(err);
-       // 檢查 HTTP 錯誤 (如 400/500)
        let errorDetail = '';
        if (err.response && err.response.data) {
            errorDetail = err.response.data.detail || err.response.data.message || '';
@@ -588,7 +589,7 @@ const handleDeleteKey = async (row: KeyData) => {
 
        if (typeof errorDetail === 'string' && errorDetail.includes('Old Key does not exist in cloud platform')) {
            ElMessage.error('Old Key does not exist in cloud platform');
-           await fetchKeys(); // 【修正】發生此特定錯誤時重新撈取資料
+           await fetchKeys(); 
        } else {
            ElMessage.error(err.message || '刪除失敗');
        }

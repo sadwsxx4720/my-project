@@ -162,19 +162,26 @@ const filteredKeysByCodename = computed<any[]>(() => {
         const currentSelectedCode = auth.currentSelectedCodename;
         const allowedUserCodes = auth.availableCodename; 
 
-        if (!Array.isArray(allowedUserCodes) || !currentSelectedCode) {
+        if (!currentSelectedCode) {
              console.warn("filteredKeysByCodename: Auth data not ready.");
              return [];
         }
         
         if (currentSelectedCode === 'all') {
-            if (allowedUserCodes.length === 0) return [];
-            // 【修正】key.codename 是字串，檢查是否在允許列表中
+            // 【修正】如果是 Superuser，直接回傳所有金鑰 (無視綁定列表)
+            if (auth.isSuperuser) {
+                return allFetchedKeys;
+            }
+
+            // 一般使用者：必須檢查該金鑰是否屬於他被授權的專案
+            if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
+                return [];
+            }
             return allFetchedKeys.filter(key => 
                 key.codename && allowedUserCodes.includes(key.codename)
             );
         } else {
-            // 【修正】key.codename 是字串，直接比對
+            // 單一專案篩選
             return allFetchedKeys.filter(key => 
                 key.codename === currentSelectedCode
             );
