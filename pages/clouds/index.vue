@@ -284,7 +284,14 @@ onMounted(async () => {
       </template>
 
       <div class="table-container">
-        <el-table v-loading="loading" :data="filteredData" style="width: 100%" border stripe>
+        <el-table 
+          v-loading="loading" 
+          :data="filteredData" 
+          style="width: 100%" 
+          border 
+          stripe
+          table-layout="auto"
+        >
           <el-table-column prop="cloud_type" label="雲平台類型" min-width="120" sortable />
           <el-table-column prop="cloud_account_id" label="雲平台ID" width="200" show-overflow-tooltip />
           
@@ -327,7 +334,7 @@ onMounted(async () => {
              </template>
           </el-table-column>
 
-          <el-table-column label="操作" min-width="120" align="center"> 
+          <el-table-column label="操作" width="140" align="center" fixed="right"> 
             <template #default="scope">
               <el-button
                 size="small"
@@ -442,7 +449,12 @@ onMounted(async () => {
     display: flex;
     align-items: center;
 }
-.table-container { width: 100%; }
+
+/* 修改 4: 確保容器可以橫向滾動 */
+.table-container { 
+    width: 100%; 
+    overflow-x: auto; 
+}
 
 .key-id-item {
   margin-bottom: 4px;
