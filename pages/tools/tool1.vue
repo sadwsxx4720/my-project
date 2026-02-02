@@ -747,7 +747,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           
           <el-table-column prop="key_description" label="描述" min-width="200" show-overflow-tooltip />
 
-          <el-table-column label="操作" width="220" align="center"> 
+          <el-table-column label="操作" width="220" align="center" fixed="right"> 
             <template #default="scope">
               <div class="action-buttons">
                 
