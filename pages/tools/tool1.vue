@@ -52,7 +52,7 @@ const firstCreateForm = reactive({
   key_type: '',   // 使用者選擇 Parent/Child
 })
 
-// --- Helper: 判斷金鑰是否為 Active (包含處理資料庫拼字錯誤 Acitve) ---
+// --- Helper: 判斷金鑰是否為 Active ---
 const isKeyActive = (state: string | null | undefined): boolean => {
   if (!state) return false;
   const s = state.trim();
@@ -240,18 +240,15 @@ const filteredData = computed(() => {
     let codenameMatch = false;
 
     if (currentCode === 'all') {
-         // 【修正】如果是 Superuser，直接視為匹配 (可以看到所有專案)
          if (auth.isSuperuser) {
              codenameMatch = true; 
          } else {
-             // 一般使用者：必須檢查該金鑰是否屬於他被授權的專案
              if (!Array.isArray(allowedUserCodes) || allowedUserCodes.length === 0) {
                  return false;
              }
              codenameMatch = allowedUserCodes.includes(keyCodename);
          }
     } else {
-        // 單一專案篩選
         codenameMatch = keyCodename === currentCode;
     }
     
@@ -312,6 +309,30 @@ const treeData = computed(() => {
 
   return tree;
 });
+
+// --- 新增邏輯：判斷按鈕顯示 ---
+
+// 1. 取得所有金鑰 ID 的集合，用於快速查詢
+const allKeyIds = computed(() => {
+  return new Set(keyList.value.map(k => k.key_id));
+});
+
+// 2. 判斷是否為第一代或孤兒金鑰 (用於控制新增/刪除按鈕)
+const shouldShowActions = (row: KeyData) => {
+  // 情況 A: 如果沒有 old_key (表示是第一代)，顯示按鈕
+  if (!row.old_key) {
+    return true;
+  }
+  
+  // 情況 B: 如果有 old_key，但該 old_key (父金鑰) 已不存在於清單中 -> 視為孤兒或頂層，顯示按鈕
+  if (!allKeyIds.value.has(row.old_key)) {
+    return true;
+  }
+
+  // 情況 C: 有 old_key 且父金鑰存在 -> 隱藏「新增/刪除」按鈕
+  return false;
+};
+
 
 // 狀態切換 (啟用/停用)
 const handleToggleState = async (row: KeyData) => {
@@ -777,7 +798,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 <span v-else style="margin-right: 5px; color: #ccc;">-</span>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Parent' && canManageParentKeys && isKeyActive(scope.row.key_state)"
+                  v-if="scope.row.key_type === 'Parent' && canManageParentKeys && isKeyActive(scope.row.key_state) && shouldShowActions(scope.row)"
                   size="small"
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
@@ -787,7 +808,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="scope.row.key_type === 'Child' && canManageKeys && isKeyActive(scope.row.key_state)"
+                  v-if="scope.row.key_type === 'Child' && canManageKeys && isKeyActive(scope.row.key_state) && shouldShowActions(scope.row)"
                   size="small"
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
@@ -806,7 +827,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="canManageParentKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Parent'"
+                  v-if="canManageParentKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Parent' && shouldShowActions(scope.row)"
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
