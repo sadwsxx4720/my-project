@@ -818,7 +818,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="canManageKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Child'"
+                  v-if="canManageKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Child'" 
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
@@ -827,7 +827,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                 </el-button>
 
                 <el-button
-                  v-if="canManageParentKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Parent' && shouldShowActions(scope.row)"
+                  v-if="canManageParentKeys && scope.row.key_state === 'Disabled' && scope.row.key_type === 'Parent'"
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
