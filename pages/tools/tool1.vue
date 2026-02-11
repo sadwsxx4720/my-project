@@ -35,6 +35,9 @@ interface KeyData {
 // --- State ---
 const keyList = ref<KeyData[]>([]) 
 const loading = ref(false)
+// 新增：全域動作處理狀態，用於鎖定表格操作
+const isActionProcessing = ref(false)
+
 const isUpdating = ref(false) 
 const searchQuery = ref('') 
 const cloudTypeFilter = ref('all') 
@@ -151,6 +154,9 @@ const fetchKeys = async () => {
 const handleUpdateData = async () => {
   try {
     isUpdating.value = true
+    // 這邊也會鎖住表格，因為使用了全域 loading 遮罩
+    isActionProcessing.value = true 
+    
     const savedToken = localStorage.getItem('auth_token')
     if (!savedToken) {
       ElMessage.error('尚未登入')
@@ -175,6 +181,7 @@ const handleUpdateData = async () => {
     ElMessage.error('更新資料失敗')
   } finally {
     isUpdating.value = false
+    isActionProcessing.value = false
   }
 }
 
@@ -312,31 +319,25 @@ const treeData = computed(() => {
 
 // --- 新增邏輯：判斷按鈕顯示 ---
 
-// 1. 取得所有金鑰 ID 的集合，用於快速查詢
 const allKeyIds = computed(() => {
   return new Set(keyList.value.map(k => k.key_id));
 });
 
-// 2. 判斷是否為第一代或孤兒金鑰 (用於控制新增/刪除按鈕)
 const shouldShowActions = (row: KeyData) => {
-  // 情況 A: 如果沒有 old_key (表示是第一代)，顯示按鈕
   if (!row.old_key) {
     return true;
   }
-  
-  // 情況 B: 如果有 old_key，但該 old_key (父金鑰) 已不存在於清單中 -> 視為孤兒或頂層，顯示按鈕
   if (!allKeyIds.value.has(row.old_key)) {
     return true;
   }
-
-  // 情況 C: 有 old_key 且父金鑰存在 -> 隱藏「新增/刪除」按鈕
   return false;
 };
 
 
 // 狀態切換 (啟用/停用)
 const handleToggleState = async (row: KeyData) => {
-  if (updatingStateMap.value[row.key_id]) return;
+  // 雙重保險：如果已經在處理中，直接返回
+  if (isActionProcessing.value || updatingStateMap.value[row.key_id]) return;
 
   const currentState = row.key_state;
   const isCurrentlyActive = isKeyActive(currentState);
@@ -345,6 +346,8 @@ const handleToggleState = async (row: KeyData) => {
 
   try {
     updatingStateMap.value[row.key_id] = true;
+    isActionProcessing.value = true; // 鎖定表格
+
     const token = localStorage.getItem('auth_token');
 
     let url = '';
@@ -396,12 +399,16 @@ const handleToggleState = async (row: KeyData) => {
     }
   } finally {
     updatingStateMap.value[row.key_id] = false;
+    isActionProcessing.value = false; // 解除鎖定
   }
 }
 
 // Parent(Active) -> 新增 Parent
 // Child(Active) -> 新增 Child
 const handleRotateKey = async (row: KeyData) => {
+  // 如果正在處理中，不允許點擊
+  if (isActionProcessing.value) return;
+
   const targetKeyType = row.key_type; 
   const typeLabel = targetKeyType === 'Parent' ? 'Parent Key' : 'Child Key';
 
@@ -413,6 +420,8 @@ const handleRotateKey = async (row: KeyData) => {
     )
 
     creatingKeyMap.value[row.key_id] = true;
+    isActionProcessing.value = true; // 鎖定表格
+
     const token = localStorage.getItem('auth_token');
     
     let url = '';
@@ -472,11 +481,14 @@ const handleRotateKey = async (row: KeyData) => {
     }
   } finally {
     if (row && row.key_id) creatingKeyMap.value[row.key_id] = false;
+    isActionProcessing.value = false; // 解除鎖定
   }
 }
 
 // 開啟 First Create Modal
 const handleOpenFirstCreateDialog = () => {
+  if (isActionProcessing.value) return; // 如果表格正在處理其他事務，禁止開啟
+
   const currentCode = auth.currentSelectedCodename;
   if (!currentCode || currentCode === 'all') {
     ElMessage.warning('請先在右上角選擇一個特定的專案 (Codename) 才能進行首次新增金鑰');
@@ -504,6 +516,8 @@ const submitFirstCreateKey = async () => {
   }
 
   isSubmittingFirstKey.value = true;
+  // 注意：這裡是 Modal 內的按鈕，會透過 isSubmittingFirstKey 鎖定自身
+  // 如果希望同時鎖定背景表格（避免 Modal 沒關掉時點到後面），可以加 isActionProcessing
   const token = localStorage.getItem('auth_token');
 
   try {
@@ -564,12 +578,17 @@ const submitFirstCreateKey = async () => {
 
 // 刪除金鑰
 const handleDeleteKey = async (row: KeyData) => {
+  // 如果正在處理中，不允許點擊
+  if (isActionProcessing.value) return;
+
   try {
     await ElMessageBox.confirm(
       `確定要刪除金鑰 ${row.key_id} 嗎？此操作無法復原。`,
       '刪除確認',
       { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning' }
     )
+    
+    isActionProcessing.value = true; // 鎖定表格
     
     const token = localStorage.getItem('auth_token');
     let url = '';
@@ -615,6 +634,13 @@ const handleDeleteKey = async (row: KeyData) => {
            ElMessage.error(err.message || '刪除失敗');
        }
     }
+  } finally {
+    // 只有當不是取消操作時，才需要解除鎖定 (如果是 confirm 取消，不會跑進來，但 confirm 會 throw cancel)
+    // 注意：上面的 catch block 處理了 cancel，但沒有 re-throw。
+    // 所以 finally 區塊會執行。
+    // 如果是 cancel，我們需要解除鎖定 (其實 confirm 取消時尚未設定 true)
+    // 修正邏輯：我們把 true 設定在 confirm 之後。
+    isActionProcessing.value = false;
   }
 }
 
@@ -649,6 +675,7 @@ watch(() => auth.currentSelectedCodename, async () => {
               v-model="cloudTypeFilter" 
               placeholder="雲平台" 
               style="width: 120px; margin-right: 10px;"
+              :disabled="isActionProcessing"
             >
               <el-option label="全部平台" value="all" />
               <el-option label="AWS" value="AWS" />
@@ -662,6 +689,7 @@ watch(() => auth.currentSelectedCodename, async () => {
               style="width: 300px; margin-right: 10px;" 
               clearable
               prefix-icon="Search"
+              :disabled="isActionProcessing"
             /> 
             
             <el-button 
@@ -670,6 +698,7 @@ watch(() => auth.currentSelectedCodename, async () => {
               @click="handleOpenFirstCreateDialog"
               style="margin-right: 3px;"
               v-if="auth.isSuperuser"
+              :disabled="isActionProcessing"
             >
               新增金鑰
             </el-button>
@@ -677,8 +706,9 @@ watch(() => auth.currentSelectedCodename, async () => {
             <el-button 
               type="success" 
               :icon="Refresh" 
-              :loading="isUpdating"
+              :loading="isUpdating || isActionProcessing"
               @click="handleUpdateData"
+              :disabled="isActionProcessing"
             >
               更新資料
             </el-button>
@@ -688,7 +718,8 @@ watch(() => auth.currentSelectedCodename, async () => {
 
       <div class="table-container">
         <el-table 
-          v-loading="loading" 
+          v-loading="loading || isActionProcessing" 
+          element-loading-text="資料處理中，請稍候..."
           :data="treeData" 
           style="width: 100%" 
           border 
@@ -780,6 +811,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                       plain
                       :loading="updatingStateMap[scope.row.key_id]"
                       @click="handleToggleState(scope.row)"
+                      :disabled="isActionProcessing"
                     >
                       啟用金鑰
                     </el-button>
@@ -791,6 +823,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                       plain
                       :loading="updatingStateMap[scope.row.key_id]"
                       @click="handleToggleState(scope.row)"
+                      :disabled="isActionProcessing"
                     >
                       停用金鑰
                     </el-button>
@@ -803,6 +836,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
                   @click="handleRotateKey(scope.row)"
+                  :disabled="isActionProcessing"
                 >
                   新增金鑰
                 </el-button>
@@ -813,6 +847,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                   type="primary"
                   :loading="creatingKeyMap[scope.row.key_id]"
                   @click="handleRotateKey(scope.row)"
+                  :disabled="isActionProcessing"
                 >
                   新增金鑰
                 </el-button>
@@ -822,6 +857,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
+                  :disabled="isActionProcessing"
                 >
                   刪除金鑰
                 </el-button>
@@ -831,6 +867,7 @@ watch(() => auth.currentSelectedCodename, async () => {
                   size="small"
                   type="danger"
                   @click="handleDeleteKey(scope.row)"
+                  :disabled="isActionProcessing"
                 >
                   刪除金鑰
                 </el-button>
