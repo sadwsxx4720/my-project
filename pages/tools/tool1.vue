@@ -35,24 +35,27 @@ interface KeyData {
 // --- State ---
 const keyList = ref<KeyData[]>([]) 
 const loading = ref(false)
-// 新增：全域動作處理狀態，用於鎖定表格操作
-const isActionProcessing = ref(false)
+const isActionProcessing = ref(false) // 全域鎖定
 
 const isUpdating = ref(false) 
 const searchQuery = ref('') 
 const cloudTypeFilter = ref('all') 
 const currentUserProjectRole = ref<string>('') 
-const updatingStateMap = ref<Record<string, boolean>>({}) // 控制啟用/停用 Loading
-const creatingKeyMap = ref<Record<string, boolean>>({}) // 控制列表內新增金鑰 Loading
+const updatingStateMap = ref<Record<string, boolean>>({}) 
+const creatingKeyMap = ref<Record<string, boolean>>({}) 
+
+// --- 高亮顯示相關 State ---
+const highlightedRowId = ref('') 
+const HIGHLIGHT_DURATION = 3000 // 設定為 3 秒
 
 // First Create Modal 相關 State
 const firstCreateDialogVisible = ref(false)
 const isSubmittingFirstKey = ref(false)
 const firstCreateForm = reactive({
   codename: '',
-  cloud_type: '', // 使用者選擇
-  account: '',    // username or service_account_email
-  key_type: '',   // 使用者選擇 Parent/Child
+  cloud_type: '', 
+  account: '',    
+  key_type: '',   
 })
 
 // --- Helper: 判斷金鑰是否為 Active ---
@@ -60,6 +63,37 @@ const isKeyActive = (state: string | null | undefined): boolean => {
   if (!state) return false;
   const s = state.trim();
   return s === 'Active' || s === 'Acitve';
+}
+
+// --- Helper: 觸發高亮效果 ---
+const triggerHighlight = (id: string) => {
+  highlightedRowId.value = id
+  setTimeout(() => {
+    if (highlightedRowId.value === id) {
+      highlightedRowId.value = ''
+    }
+  }, HIGHLIGHT_DURATION)
+}
+
+// --- Helper: 給 el-table 用的 row class 判斷 ---
+const tableRowClassName = ({ row }: { row: KeyData }) => {
+  if (row.key_id === highlightedRowId.value) {
+    return 'action-highlight-row' 
+  }
+  return ''
+}
+
+// --- Helper: 從 Blob 解析出 Key ID (用於新增成功後高亮新金鑰) ---
+const extractKeyIdFromBlob = async (blob: Blob): Promise<string | null> => {
+    try {
+        const text = await blob.text();
+        const data = JSON.parse(text);
+        if (data.AccessKeyId) return data.AccessKeyId;
+        if (data.private_key_id) return data.private_key_id;
+        return null;
+    } catch (e) {
+        return null;
+    }
 }
 
 // --- Computed: 表單驗證 (First Create) ---
@@ -154,7 +188,6 @@ const fetchKeys = async () => {
 const handleUpdateData = async () => {
   try {
     isUpdating.value = true
-    // 這邊也會鎖住表格，因為使用了全域 loading 遮罩
     isActionProcessing.value = true 
     
     const savedToken = localStorage.getItem('auth_token')
@@ -216,22 +249,18 @@ const fetchCurrentUserProjectRole = async () => {
 
 // --- Computed Properties ---
 
-// 一般管理權限 (Admin 或 Superuser)
 const canManageKeys = computed(() => {
   return auth.isSuperuser || currentUserProjectRole.value === 'admin';
 })
 
-// 專門給 Parent Key 的管理權限 (只有 Superuser 有)
 const canManageParentKeys = computed(() => {
   return auth.isSuperuser; 
 })
 
-// 判斷是否為專案 Admin
 const isProjectAdmin = computed(() => {
   return currentUserProjectRole.value === 'admin';
 })
 
-// 過濾邏輯 (平面資料)
 const filteredData = computed(() => {
   const currentCode = auth.currentSelectedCodename;
   const allowedUserCodes = auth.availableCodename;
@@ -317,8 +346,6 @@ const treeData = computed(() => {
   return tree;
 });
 
-// --- 新增邏輯：判斷按鈕顯示 ---
-
 const allKeyIds = computed(() => {
   return new Set(keyList.value.map(k => k.key_id));
 });
@@ -334,9 +361,8 @@ const shouldShowActions = (row: KeyData) => {
 };
 
 
-// 狀態切換 (啟用/停用)
+// 狀態切換 (啟用/停用) - 不管成功失敗都高亮
 const handleToggleState = async (row: KeyData) => {
-  // 雙重保險：如果已經在處理中，直接返回
   if (isActionProcessing.value || updatingStateMap.value[row.key_id]) return;
 
   const currentState = row.key_state;
@@ -346,7 +372,7 @@ const handleToggleState = async (row: KeyData) => {
 
   try {
     updatingStateMap.value[row.key_id] = true;
-    isActionProcessing.value = true; // 鎖定表格
+    isActionProcessing.value = true; 
 
     const token = localStorage.getItem('auth_token');
 
@@ -399,14 +425,16 @@ const handleToggleState = async (row: KeyData) => {
     }
   } finally {
     updatingStateMap.value[row.key_id] = false;
-    isActionProcessing.value = false; // 解除鎖定
+    isActionProcessing.value = false; 
+    
+    // ★★★ 不管成功或失敗，都高亮操作的那一行 ★★★
+    triggerHighlight(row.key_id);
   }
 }
 
 // Parent(Active) -> 新增 Parent
 // Child(Active) -> 新增 Child
 const handleRotateKey = async (row: KeyData) => {
-  // 如果正在處理中，不允許點擊
   if (isActionProcessing.value) return;
 
   const targetKeyType = row.key_type; 
@@ -420,7 +448,7 @@ const handleRotateKey = async (row: KeyData) => {
     )
 
     creatingKeyMap.value[row.key_id] = true;
-    isActionProcessing.value = true; // 鎖定表格
+    isActionProcessing.value = true; 
 
     const token = localStorage.getItem('auth_token');
     
@@ -446,13 +474,29 @@ const handleRotateKey = async (row: KeyData) => {
        const filename = await getDynamicFilename(res.data, 'credentials.json');
        downloadBlob(res.data, filename, res.headers);
        ElMessage.success('金鑰新增成功，正在下載憑證檔案...');
-       await fetchKeys();
+       
+       await fetchKeys(); 
+
+       // ★★★ 成功：找出新金鑰 ID 並高亮它 ★★★
+       const newKeyId = await extractKeyIdFromBlob(res.data);
+       if (newKeyId) {
+           triggerHighlight(newKeyId);
+       } else {
+           // 如果找不到新 ID，高亮原本那行當作回饋
+           triggerHighlight(row.key_id);
+       }
     } else {
       ElMessage.error('新增失敗');
+      // ★★★ 失敗 (狀態碼非200)：高亮原本操作的列 ★★★
+      triggerHighlight(row.key_id);
     }
 
   } catch (err: any) {
-    if (err === 'cancel') return;
+    if (err === 'cancel') return; // 取消不動作
+    
+    // ★★★ 發生錯誤 (例外/網絡錯誤)：高亮原本操作的列 ★★★
+    triggerHighlight(row.key_id);
+
     console.error(err);
     if (err.response && err.response.data instanceof Blob) {
         const reader = new FileReader();
@@ -481,13 +525,13 @@ const handleRotateKey = async (row: KeyData) => {
     }
   } finally {
     if (row && row.key_id) creatingKeyMap.value[row.key_id] = false;
-    isActionProcessing.value = false; // 解除鎖定
+    isActionProcessing.value = false; 
   }
 }
 
 // 開啟 First Create Modal
 const handleOpenFirstCreateDialog = () => {
-  if (isActionProcessing.value) return; // 如果表格正在處理其他事務，禁止開啟
+  if (isActionProcessing.value) return; 
 
   const currentCode = auth.currentSelectedCodename;
   if (!currentCode || currentCode === 'all') {
@@ -516,8 +560,6 @@ const submitFirstCreateKey = async () => {
   }
 
   isSubmittingFirstKey.value = true;
-  // 注意：這裡是 Modal 內的按鈕，會透過 isSubmittingFirstKey 鎖定自身
-  // 如果希望同時鎖定背景表格（避免 Modal 沒關掉時點到後面），可以加 isActionProcessing
   const token = localStorage.getItem('auth_token');
 
   try {
@@ -546,6 +588,13 @@ const submitFirstCreateKey = async () => {
       ElMessage.success('金鑰首次新增成功，正在下載憑證檔案...');
       firstCreateDialogVisible.value = false;
       await fetchKeys();
+
+      // ★★★ 首次新增成功：找出新 Key ID 並高亮 ★★★
+      const newKeyId = await extractKeyIdFromBlob(res.data);
+      if (newKeyId) {
+        triggerHighlight(newKeyId);
+      }
+
     } else {
       ElMessage.error('新增失敗');
     }
@@ -578,7 +627,6 @@ const submitFirstCreateKey = async () => {
 
 // 刪除金鑰
 const handleDeleteKey = async (row: KeyData) => {
-  // 如果正在處理中，不允許點擊
   if (isActionProcessing.value) return;
 
   try {
@@ -588,7 +636,7 @@ const handleDeleteKey = async (row: KeyData) => {
       { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning' }
     )
     
-    isActionProcessing.value = true; // 鎖定表格
+    isActionProcessing.value = true; 
     
     const token = localStorage.getItem('auth_token');
     let url = '';
@@ -635,11 +683,6 @@ const handleDeleteKey = async (row: KeyData) => {
        }
     }
   } finally {
-    // 只有當不是取消操作時，才需要解除鎖定 (如果是 confirm 取消，不會跑進來，但 confirm 會 throw cancel)
-    // 注意：上面的 catch block 處理了 cancel，但沒有 re-throw。
-    // 所以 finally 區塊會執行。
-    // 如果是 cancel，我們需要解除鎖定 (其實 confirm 取消時尚未設定 true)
-    // 修正邏輯：我們把 true 設定在 confirm 之後。
     isActionProcessing.value = false;
   }
 }
@@ -684,7 +727,7 @@ watch(() => auth.currentSelectedCodename, async () => {
 
             <el-input 
               v-model="searchQuery"
-              placeholder="搜尋所有資訊 (ID, 代號, 描述...)" 
+              placeholder="搜尋所有資訊" 
               size="default" 
               style="width: 300px; margin-right: 10px;" 
               clearable
@@ -729,6 +772,7 @@ watch(() => auth.currentSelectedCodename, async () => {
           default-expand-all
           :indent="0"
           :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
+          :row-class-name="tableRowClassName"
         >
           
           <el-table-column prop="cloud_type" label="雲平台" width="100" sortable align="center">
@@ -1000,5 +1044,22 @@ watch(() => auth.currentSelectedCodename, async () => {
 .text-placeholder {
     color: #909399;
     font-weight: bold;
+}
+
+/* 修改的高亮樣式：深灰色 */
+:deep(.el-table .action-highlight-row) {
+  /* 設定列的背景色 */
+  background-color: #d9d9d9 !important; 
+  transition: background-color 0.5s ease;
+}
+
+/* 解決固定欄位透視問題*/
+:deep(.el-table .action-highlight-row .el-table__cell) {
+  background-color: #d9d9d9 !important;
+}
+
+/* 確保 Hover 時也保持高亮顏色 */
+:deep(.el-table .action-highlight-row:hover > td.el-table__cell) {
+  background-color: #d9d9d9 !important;
 }
 </style>
